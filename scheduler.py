@@ -1,11 +1,24 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from app.core.config import get_settings
-from app.core.logging import events
-from app.db.session import SessionLocal
-from app.services.prospecting import ProspectingService
-from app.services.outreach import OutreachService
-from app.models.entities import Campaign, CampaignProspect, Prospect
+
+from config import get_settings
+from core_logging import events
+from session import SessionLocal
+from prospecting import ProspectingService
+from outreach import OutreachService
+from entities import (
+    Campaign,
+    CampaignProspect,
+    Prospect,
+)
+
 from sqlalchemy import select
+
+
+settings = get_settings()
+
+scheduler = AsyncIOScheduler(
+    timezone="UTC"
+)
 
 s=get_settings(); scheduler=AsyncIOScheduler(timezone='UTC')
 
