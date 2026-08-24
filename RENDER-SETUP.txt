@@ -1,0 +1,33 @@
+PIXEL PULSE STUDIO - RENDER
+
+This ZIP uses the package layout:
+app/
+  main.py
+  api/
+  core/
+  db/
+  models/
+  services/
+  telegram/
+  workers/
+
+Render settings:
+Root Directory: leave EMPTY
+Environment: Python
+Build Command: pip install -r requirements.txt
+Start Command: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+IMPORTANT:
+Do NOT use:
+- python main.py
+- uvicorn main:app
+- uvicorn app:app
+- a Root Directory of app
+
+The correct application target is:
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+Python:
+PYTHON_VERSION=3.12.8
+
+The project deliberately has no root-level logging.py, db.py, or routes.py.
