@@ -1,10 +1,8 @@
 import os
 from dataclasses import dataclass
 
-
 def _bool(name: str, default: bool = False) -> bool:
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
-
 
 @dataclass(frozen=True)
 class Settings:
@@ -21,6 +19,7 @@ class Settings:
     TEST_MODE: bool = _bool("TEST_MODE", False)
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     OSM_ENABLED: bool = _bool("OSM_ENABLED", True)
+    WEB_DISCOVERY_ENABLED: bool = _bool("WEB_DISCOVERY_ENABLED", False)
     PRODUCT_HUNT_ENABLED: bool = _bool("PRODUCT_HUNT_ENABLED", False)
     PRODUCT_HUNT_ACCESS_TOKEN: str = os.getenv("PRODUCT_HUNT_ACCESS_TOKEN", "")
     PRODUCT_HUNT_COMMERCIAL_APPROVED: bool = _bool("PRODUCT_HUNT_COMMERCIAL_APPROVED", False)
@@ -32,9 +31,5 @@ class Settings:
     MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "20"))
     DELIVERY_TOKEN_TTL_HOURS: int = int(os.getenv("DELIVERY_TOKEN_TTL_HOURS", "72"))
 
-
 _settings = Settings()
-
-
-def get_settings() -> Settings:
-    return _settings
+def get_settings() -> Settings: return _settings
