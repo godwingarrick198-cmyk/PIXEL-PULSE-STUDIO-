@@ -18,6 +18,7 @@ class Settings:
     FLW_BASE_URL: str = os.getenv("FLW_BASE_URL", "https://api.flutterwave.com/v3")
     TEST_MODE: bool = _bool("TEST_MODE", False)
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM_ADMIN_CHAT_ID: str = os.getenv("TELEGRAM_ADMIN_CHAT_ID", "")
     OSM_ENABLED: bool = _bool("OSM_ENABLED", True)
     WEB_DISCOVERY_ENABLED: bool = _bool("WEB_DISCOVERY_ENABLED", False)
     PRODUCT_HUNT_ENABLED: bool = _bool("PRODUCT_HUNT_ENABLED", False)
