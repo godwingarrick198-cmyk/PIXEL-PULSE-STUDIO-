@@ -5,7 +5,7 @@ from app.db.init import init_db
 from app.api.routes import router
 from app.api.telegram import router as telegram_router
 from app.workers.scheduler import scheduler
-from app.bot import set_webhook, delete_webhook
+from app.bot import set_webhook
 
 
 @asynccontextmanager
@@ -20,10 +20,6 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     yield
-    try:
-        await delete_webhook()
-    except Exception:
-        pass
     try:
         scheduler.shutdown(wait=False)
     except Exception:
