@@ -1,14 +1,15 @@
 from fastapi import APIRouter, Header, HTTPException, Request
 from sqlalchemy import select, func
 from app.db.session import SessionLocal
-from app.models.entities import Campaign, Prospect, Order, OutreachMessage, Project
+from app.models.entities import Campaign, CampaignProspect, Prospect, Order, OutreachMessage
 from app.services.campaigns import CampaignService
 from app.services.presentation import PresentationService
+from app.services.prospecting import ProspectingService
 from app.core.config import get_settings
 from app.bot import send_message, webhook_secret
 
 router = APIRouter(prefix='/api/telegram')
-settings = get_settings(); campaigns = CampaignService(); presentations = PresentationService()
+settings = get_settings(); campaigns = CampaignService(); presentations = PresentationService(); prospecting = ProspectingService()
 
 def authorized(chat_id):
     admin = getattr(settings, 'TELEGRAM_ADMIN_CHAT_ID', '')
@@ -21,7 +22,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     update = await request.json(); message = update.get('message') or {}; chat = message.get('chat') or {}; chat_id = chat.get('id'); text = (message.get('text') or '').strip()
     if not chat_id or not text: return {'ok': True}
     if text.startswith('/start'):
-        await send_message(chat_id, f'Pixel Pulse Studio is online. Your Telegram chat ID is {chat_id}.\n\nCommands:\n/status\n/campaigns\n/newcampaign NAME|TARGET|DAYS|INDUSTRY|COUNTRY|SERVICE\n/prospects\n/orders\n/pause CAMPAIGN_ID\n/resume CAMPAIGN_ID\n/stop CAMPAIGN_ID\n/generate ORDER_ID')
+        await send_message(chat_id, f'Pixel Pulse Studio is online. Your Telegram chat ID is {chat_id}.\n\nCommands:\n/status\n/campaigns\n/newcampaign NAME|TARGET|DAYS|INDUSTRY|COUNTRY|SERVICE\n/hunt CAMPAIGN_ID\n/prospects\n/orders\n/pause CAMPAIGN_ID\n/resume CAMPAIGN_ID\n/stop CAMPAIGN_ID\n/generate ORDER_ID')
         return {'ok': True}
     if not authorized(chat_id):
         await send_message(chat_id, 'This bot is online, but this chat is not authorized for controls. Add your Telegram chat ID to TELEGRAM_ADMIN_CHAT_ID in Render.')
@@ -44,7 +45,32 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             else:
                 name,target,days,industry,country,service=fields
                 c=campaigns.create(db,name,max(1,int(target)),max(1,int(days)),[industry],[country],[service],'NORMAL')
-                await send_message(chat_id,f'Campaign created.\nID: {c.campaign_id}\nName: {c.name}\nTarget: {c.target_prospects}\nStatus: {c.status}\n\nStart it with:\n/resume {c.campaign_id}')
+                await send_message(chat_id,f'Campaign created.\nID: {c.campaign_id}\nName: {c.name}\nTarget: {c.target_prospects}\nStatus: {c.status}\n\nStart it with:\n/resume {c.campaign_id}\nThen hunt with:\n/hunt {c.campaign_id}')
+        elif command == '/hunt':
+            if len(parts)!=2:
+                await send_message(chat_id,'Usage: /hunt PPS-XXXXXXXXXX')
+            else:
+                c=db.scalar(select(Campaign).where(Campaign.campaign_id==parts[1]))
+                if not c:
+                    await send_message(chat_id,'Campaign not found. Use /campaigns to see the exact campaign ID.')
+                elif c.status not in ('RUNNING','DRAFT'):
+                    await send_message(chat_id,f'Campaign {c.name} is {c.status}. Resume it before hunting.')
+                elif c.remaining_prospects <= 0:
+                    await send_message(chat_id,'This campaign has no remaining prospect capacity.')
+                else:
+                    limit=min(c.remaining_prospects,c.daily_limit,settings.MAX_PROSPECTS_PER_RUN)
+                    query={'industry': c.industries[0] if c.industries else '', 'country': c.countries[0] if c.countries else '', 'service': c.services[0] if c.services else '', 'limit': limit}
+                    await send_message(chat_id,f'🔎 Hunting up to {limit} qualified prospects for {c.name}...')
+                    found=await prospecting.discover(db,query,limit)
+                    linked=0
+                    for p in found:
+                        exists=db.scalar(select(CampaignProspect.id).where(CampaignProspect.campaign_id==c.id, CampaignProspect.prospect_id==p.id))
+                        if not exists:
+                            db.add(CampaignProspect(campaign_id=c.id,prospect_id=p.id,status='QUEUED')); linked+=1
+                    c.remaining_prospects=max(0,c.remaining_prospects-linked)
+                    c.completed_prospects += linked
+                    db.commit()
+                    await send_message(chat_id,f'✅ Hunt complete.\nQualified prospects found: {len(found)}\nAdded to campaign: {linked}\nRemaining campaign capacity: {c.remaining_prospects}')
         elif command in ('/pause','/resume','/stop'):
             if len(parts)!=2: await send_message(chat_id,f'Usage: {command} PPS-XXXXXXXXXX')
             else:
