@@ -19,6 +19,7 @@ class Settings:
     TEST_MODE: bool = _bool("TEST_MODE", False)
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     TELEGRAM_ADMIN_CHAT_ID: str = os.getenv("TELEGRAM_ADMIN_CHAT_ID", "")
+    TELEGRAM_CHANNEL_ID: str = os.getenv("TELEGRAM_CHANNEL_ID", "")
     OSM_ENABLED: bool = _bool("OSM_ENABLED", True)
     WEB_DISCOVERY_ENABLED: bool = _bool("WEB_DISCOVERY_ENABLED", False)
     PRODUCT_HUNT_ENABLED: bool = _bool("PRODUCT_HUNT_ENABLED", False)
@@ -31,6 +32,12 @@ class Settings:
     MAX_DAILY_OUTREACH: int = int(os.getenv("MAX_DAILY_OUTREACH", "100"))
     MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "20"))
     DELIVERY_TOKEN_TTL_HOURS: int = int(os.getenv("DELIVERY_TOKEN_TTL_HOURS", "72"))
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "")
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+    SMTP_FROM_NAME: str = os.getenv("SMTP_FROM_NAME", "Pixel Pulse Studio")
+    SMTP_FROM_EMAIL: str = os.getenv("SMTP_FROM_EMAIL", "")
 
 _settings = Settings()
 def get_settings() -> Settings: return _settings

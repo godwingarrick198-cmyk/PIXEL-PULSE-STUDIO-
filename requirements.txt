@@ -16,3 +16,4 @@ beautifulsoup4>=4.13,<5
 lxml>=6,<7
 pytest>=8,<9
 pytest-asyncio>=1,<2
+aiosmtplib>=3.0,<4
