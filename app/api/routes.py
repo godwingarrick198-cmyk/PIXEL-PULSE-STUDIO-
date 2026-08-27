@@ -1,5 +1,6 @@
 import os, json, uuid, hashlib
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Header
+from fastapi.responses import FileResponse
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -7,35 +8,30 @@ from app.schemas.api import CampaignCreate, OrderCreate, OnboardingUpdate
 from app.models.entities import *
 from app.services.campaigns import CampaignService
 from app.services.flutterwave import FlutterwaveService
+from app.services.presentation import PresentationService
 from app.core.config import get_settings
 from app.core.logging import events
 
 router=APIRouter(prefix='/api')
-s=get_settings(); campaigns=CampaignService(); flw=FlutterwaveService()
+s=get_settings(); campaigns=CampaignService(); flw=FlutterwaveService(); presentations=PresentationService()
 
 def safe_campaign(c):
     return {'campaign_id':c.campaign_id,'name':c.name,'status':c.status,'target_prospects':c.target_prospects,'completed_prospects':c.completed_prospects,'remaining_prospects':c.remaining_prospects,'daily_limit':c.daily_limit,'priority':c.priority,'industries':c.industries,'countries':c.countries,'services':c.services,'start_time':c.start_time,'end_time':c.end_time}
 
 @router.get('/health')
 def health(): return {'status':'ok'}
-
 @router.get('/status')
 def status(db:Session=Depends(get_db)):
     c=db.scalar(select(Campaign).where(Campaign.status=='RUNNING').order_by(Campaign.created_at.desc()))
     return {'agent_status':'RUNNING' if c else 'IDLE','active_campaign':safe_campaign(c) if c else None,'today_prospects':db.scalar(select(func.count(Prospect.id))) or 0,'outreach_count':db.scalar(select(func.count(OutreachMessage.id))) or 0,'active_orders':db.scalar(select(func.count(Order.id)).where(Order.status.in_(['PAID','IN_PRODUCTION','QC','READY']))) or 0}
-
 @router.get('/campaigns')
 def list_campaigns(db:Session=Depends(get_db)): return [safe_campaign(c) for c in db.scalars(select(Campaign).order_by(Campaign.created_at.desc())).all()]
-
 @router.post('/campaigns')
-def create_campaign(payload:CampaignCreate,db:Session=Depends(get_db)):
-    return safe_campaign(campaigns.create(db,payload.name,payload.target_prospects,payload.duration_days,payload.industries,payload.countries,payload.services,payload.priority))
-
+def create_campaign(payload:CampaignCreate,db:Session=Depends(get_db)): return safe_campaign(campaigns.create(db,payload.name,payload.target_prospects,payload.duration_days,payload.industries,payload.countries,payload.services,payload.priority))
 def change(cid,status_value,db):
     c=campaigns.set_status(db,cid,status_value)
     if not c: raise HTTPException(404,'Campaign not found')
     return safe_campaign(c)
-
 @router.post('/campaigns/{id}/pause')
 def pause(id:str,db:Session=Depends(get_db)): return change(id,'PAUSED',db)
 @router.post('/campaigns/{id}/resume')
@@ -44,33 +40,24 @@ def resume(id:str,db:Session=Depends(get_db)): return change(id,'RUNNING',db)
 def stop(id:str,db:Session=Depends(get_db)): return change(id,'STOPPED',db)
 @router.post('/campaigns/{id}/cancel')
 def cancel(id:str,db:Session=Depends(get_db)): return change(id,'CANCELLED',db)
-
 @router.get('/prospects')
-def prospects(limit:int=50,db:Session=Depends(get_db)):
-    return [{'id':p.id,'company_name':p.company_name,'website':p.website,'industry':p.industry,'service_match':p.service_match,'score':p.qualification_score,'status':p.status,'email':p.contact_email} for p in db.scalars(select(Prospect).order_by(Prospect.created_at.desc()).limit(min(limit,200))).all()]
-
+def prospects(limit:int=50,db:Session=Depends(get_db)): return [{'id':p.id,'company_name':p.company_name,'website':p.website,'industry':p.industry,'service_match':p.service_match,'score':p.qualification_score,'status':p.status,'email':p.contact_email} for p in db.scalars(select(Prospect).order_by(Prospect.created_at.desc()).limit(min(limit,200))).all()]
 @router.get('/prospects/{id}')
 def prospect(id:int,db:Session=Depends(get_db)):
     p=db.get(Prospect,id)
     if not p: raise HTTPException(404,'Prospect not found')
     return {'id':p.id,'company_name':p.company_name,'website':p.website,'industry':p.industry,'description':p.description,'country':p.country,'service_match':p.service_match,'qualification':p.qualification_json}
-
 @router.post('/prospects/search')
 async def search_prospects(payload:dict,db:Session=Depends(get_db)):
     from app.services.prospecting import ProspectingService
-    items=await ProspectingService().discover(db,payload,min(int(payload.get('limit',20)),s.MAX_PROSPECTS_PER_RUN))
-    return [{'id':p.id,'company_name':p.company_name,'service':p.service_match,'score':p.qualification_score} for p in items]
-
+    items=await ProspectingService().discover(db,payload,min(int(payload.get('limit',20)),s.MAX_PROSPECTS_PER_RUN)); return [{'id':p.id,'company_name':p.company_name,'service':p.service_match,'score':p.qualification_score} for p in items]
 @router.get('/orders')
-def orders(db:Session=Depends(get_db)):
-    return [{'id':o.id,'order_id':o.order_id,'package':o.package,'amount':o.amount,'currency':o.currency,'status':o.status,'created_at':o.created_at} for o in db.scalars(select(Order).order_by(Order.created_at.desc())).all()]
-
+def orders(db:Session=Depends(get_db)): return [{'id':o.id,'order_id':o.order_id,'package':o.package,'amount':o.amount,'currency':o.currency,'status':o.status,'created_at':o.created_at} for o in db.scalars(select(Order).order_by(Order.created_at.desc())).all()]
 @router.get('/orders/{id}')
 def order(id:int,db:Session=Depends(get_db)):
     o=db.get(Order,id)
     if not o: raise HTTPException(404,'Order not found')
     return {'id':o.id,'order_id':o.order_id,'package':o.package,'amount':o.amount,'currency':o.currency,'status':o.status}
-
 @router.post('/orders')
 async def create_order(payload:OrderCreate,db:Session=Depends(get_db)):
     prices={'STARTER':s.STARTER_PRICE,'PROFESSIONAL':s.PROFESSIONAL_PRICE,'PREMIUM':s.PREMIUM_PRICE}; package=payload.package.upper()
@@ -82,7 +69,6 @@ async def create_order(payload:OrderCreate,db:Session=Depends(get_db)):
         result=await flw.create_payment(ref,o.amount,o.currency,payload.email,payload.customer_name,o.order_id); pay.payment_url=result.get('link'); db.commit(); events.event('PAYMENT_CREATED',order_id=o.order_id)
     except Exception as e: db.rollback(); raise HTTPException(502,f'Payment creation failed: {e}')
     return {'order_id':o.order_id,'reference':ref,'payment_url':pay.payment_url,'amount':o.amount,'currency':o.currency}
-
 @router.post('/webhooks/flutterwave')
 async def flutterwave_webhook(request:Request,db:Session=Depends(get_db),flutterwave_signature:str|None=Header(default=None,alias='flutterwave-signature'),verif_hash:str|None=Header(default=None,alias='verif-hash')):
     raw=await request.body(); sig=flutterwave_signature or verif_hash
@@ -95,13 +81,11 @@ async def flutterwave_webhook(request:Request,db:Session=Depends(get_db),flutter
         if ok:
             pay.status='PAID'; pay.provider_transaction_id=str(txid); o=db.get(Order,pay.order_id); o.status='PAID'; form=db.scalar(select(OnboardingForm).where(OnboardingForm.order_id==o.id)) or OnboardingForm(order_id=o.id,data={}); db.add(form); ev.processed=True; db.commit(); events.event('PAYMENT_VERIFIED',order_id=o.order_id)
     return {'status':'ok'}
-
 @router.get('/deliveries/{order_id}')
 def delivery(order_id:int,db:Session=Depends(get_db)):
     d=db.scalar(select(Delivery).where(Delivery.order_id==order_id))
     if not d: raise HTTPException(404,'Delivery not found')
     return {'token':d.token,'expires_at':d.expires_at,'status':d.status}
-
 @router.put('/orders/{id}/onboarding')
 def update_onboarding(id:int,payload:OnboardingUpdate,db:Session=Depends(get_db)):
     o=db.get(Order,id)
@@ -110,7 +94,21 @@ def update_onboarding(id:int,payload:OnboardingUpdate,db:Session=Depends(get_db)
     if not form: form=OnboardingForm(order_id=id,data={}); db.add(form)
     form.data={**(form.data or {}),**payload.data}; required=['customer_name','company_name','email','presentation_type','purpose','audience','number_of_slides','style']; form.status='COMPLETE' if all(form.data.get(k) not in (None,'',[]) for k in required) else 'INCOMPLETE'; db.commit()
     return {'status':form.status,'data':form.data}
-
+@router.post('/orders/{id}/generate')
+def generate_presentation(id:int,db:Session=Depends(get_db)):
+    o=db.get(Order,id)
+    if not o: raise HTTPException(404,'Order not found')
+    if o.status not in ('PAID','IN_PRODUCTION','QC','READY'): raise HTTPException(400,'Order must be PAID before generation')
+    try: project=presentations.generate(db,id)
+    except ValueError as e: raise HTTPException(400,str(e))
+    return {'project_id':project.id,'status':project.status,'pptx_path':project.pptx_path,'pdf_path':project.pdf_path,'slides':len(project.strategy_json.get('slides',[]))}
+@router.get('/orders/{id}/presentation/{kind}')
+def presentation_file(id:int,kind:str,db:Session=Depends(get_db)):
+    project=db.scalar(select(Project).where(Project.order_id==id))
+    if not project or project.status!='READY': raise HTTPException(404,'Presentation not ready')
+    path=project.pptx_path if kind.lower()=='pptx' else project.pdf_path if kind.lower()=='pdf' else None
+    if not path or not os.path.exists(path): raise HTTPException(404,'File not found')
+    return FileResponse(path,filename=os.path.basename(path))
 @router.post('/orders/{id}/files')
 async def upload_order_file(id:int,file:UploadFile=File(...),db:Session=Depends(get_db)):
     o=db.get(Order,id)
