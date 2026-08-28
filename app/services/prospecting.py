@@ -4,7 +4,7 @@ import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy import select, or_, func
 from app.models.entities import Prospect, SuppressionList
-from app.providers import OSMProvider, WebDiscoveryProvider, ProductHuntProvider
+from app.providers import ApolloProvider, OSMProvider, WebDiscoveryProvider, ProductHuntProvider
 from app.services.ai import AIService
 from app.core.config import get_settings
 from app.core.logging import events
@@ -14,7 +14,9 @@ SOCIAL_HOSTS = {'facebook.com','linkedin.com','instagram.com','youtube.com','x.c
 
 class ProspectingService:
     def __init__(self):
-        self.s=get_settings(); self.ai=AIService(); self.providers=[WebDiscoveryProvider(),OSMProvider(),ProductHuntProvider()]
+        self.s=get_settings(); self.ai=AIService()
+        # Reliable structured provider first; public-web/OSM are fallbacks.
+        self.providers=[ApolloProvider(), WebDiscoveryProvider(), OSMProvider(), ProductHuntProvider()]
 
     def normalize_domain(self,url):
         if not url: return None
@@ -63,14 +65,20 @@ class ProspectingService:
                     except Exception:
                         continue
         except Exception as e:
-            events.event('ERROR',component='public_contact_enrichment',error=str(e))
+            events.event('ERROR',component='public_contact_enrichment',error=repr(e))
         return raw
 
     async def discover(self,db,query,limit):
         all_items=[]
+        # Providers are attempted in priority order. A structured provider is
+        # preferred; other providers remain available as fallbacks.
         for provider in self.providers:
-            try: all_items.extend(await provider.discover_prospects(query))
-            except Exception as e: events.event('ERROR',component='provider',provider=provider.name,error=str(e))
+            try:
+                items=await provider.discover_prospects(query)
+                all_items.extend(items)
+                events.event('PROSPECT_PROVIDER_RESULT',provider=provider.name,count=len(items))
+            except Exception as e:
+                events.event('ERROR',component='provider',provider=provider.name,error=repr(e))
             if len(all_items)>=limit*3: break
 
         saved=[]; seen=set()
@@ -80,8 +88,8 @@ class ProspectingService:
             email=(raw.get('contact_email') or '').strip().lower()
             name=(raw.get('company_name') or '').strip()
 
-            # Hard gate: only qualified prospects with a verified public website AND email
-            # enter the database. This prevents location/place results and unusable leads.
+            # Hard gate: only qualified prospects with a verified public/work
+            # website AND a usable email enter the database.
             if not name or not domain or not email or not EMAIL_RE.fullmatch(email):
                 continue
 
@@ -95,6 +103,8 @@ class ProspectingService:
             if checks and db.scalar(select(Prospect).where(or_(*checks))): continue
             if self.suppressed(db,raw): continue
 
+            # Existing Gemini qualification remains the decision gate after
+            # discovery and enrichment.
             q=self.ai.qualify({**raw,'domain':domain})
             if not q.qualified or q.score < self.s.MIN_QUALIFICATION_SCORE or q.recommended_service=='SKIP': continue
 
