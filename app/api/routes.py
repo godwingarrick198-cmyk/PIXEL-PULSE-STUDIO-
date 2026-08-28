@@ -18,6 +18,9 @@ s=get_settings(); campaigns=CampaignService(); flw=FlutterwaveService(); present
 def safe_campaign(c):
     return {'campaign_id':c.campaign_id,'name':c.name,'status':c.status,'target_prospects':c.target_prospects,'completed_prospects':c.completed_prospects,'remaining_prospects':c.remaining_prospects,'daily_limit':c.daily_limit,'priority':c.priority,'industries':c.industries,'countries':c.countries,'services':c.services,'start_time':c.start_time,'end_time':c.end_time}
 
+def safe_prospect(p):
+    return {'id':p.id,'company_name':p.company_name,'website':p.website,'domain':p.domain,'industry':p.industry,'country':p.country,'city':p.city,'service_match':p.service_match,'score':p.qualification_score,'status':p.status,'email':p.contact_email,'phone':p.contact_phone,'contact_name':p.contact_name,'founder_name':p.founder_name,'public_contact_url':p.public_contact_url,'linkedin_url':p.linkedin_url,'source':p.source,'source_url':p.source_url}
+
 @router.get('/health')
 def health(): return {'status':'ok'}
 @router.get('/status')
@@ -41,16 +44,17 @@ def stop(id:str,db:Session=Depends(get_db)): return change(id,'STOPPED',db)
 @router.post('/campaigns/{id}/cancel')
 def cancel(id:str,db:Session=Depends(get_db)): return change(id,'CANCELLED',db)
 @router.get('/prospects')
-def prospects(limit:int=50,db:Session=Depends(get_db)): return [{'id':p.id,'company_name':p.company_name,'website':p.website,'industry':p.industry,'service_match':p.service_match,'score':p.qualification_score,'status':p.status,'email':p.contact_email} for p in db.scalars(select(Prospect).order_by(Prospect.created_at.desc()).limit(min(limit,200))).all()]
+def prospects(limit:int=50,db:Session=Depends(get_db)): return [safe_prospect(p) for p in db.scalars(select(Prospect).order_by(Prospect.created_at.desc()).limit(min(limit,200))).all()]
 @router.get('/prospects/{id}')
 def prospect(id:int,db:Session=Depends(get_db)):
     p=db.get(Prospect,id)
     if not p: raise HTTPException(404,'Prospect not found')
-    return {'id':p.id,'company_name':p.company_name,'website':p.website,'industry':p.industry,'description':p.description,'country':p.country,'service_match':p.service_match,'qualification':p.qualification_json}
+    return {**safe_prospect(p),'description':p.description,'qualification':p.qualification_json}
 @router.post('/prospects/search')
 async def search_prospects(payload:dict,db:Session=Depends(get_db)):
     from app.services.prospecting import ProspectingService
-    items=await ProspectingService().discover(db,payload,min(int(payload.get('limit',20)),s.MAX_PROSPECTS_PER_RUN)); return [{'id':p.id,'company_name':p.company_name,'service':p.service_match,'score':p.qualification_score} for p in items]
+    items=await ProspectingService().discover(db,payload,min(int(payload.get('limit',20)),s.MAX_PROSPECTS_PER_RUN))
+    return [safe_prospect(p) for p in items]
 @router.get('/orders')
 def orders(db:Session=Depends(get_db)): return [{'id':o.id,'order_id':o.order_id,'package':o.package,'amount':o.amount,'currency':o.currency,'status':o.status,'created_at':o.created_at} for o in db.scalars(select(Order).order_by(Order.created_at.desc())).all()]
 @router.get('/orders/{id}')
