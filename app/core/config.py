@@ -25,6 +25,8 @@ class Settings:
     PRODUCT_HUNT_ENABLED: bool = _bool("PRODUCT_HUNT_ENABLED", False)
     PRODUCT_HUNT_ACCESS_TOKEN: str = os.getenv("PRODUCT_HUNT_ACCESS_TOKEN", "")
     PRODUCT_HUNT_COMMERCIAL_APPROVED: bool = _bool("PRODUCT_HUNT_COMMERCIAL_APPROVED", False)
+    APOLLO_ENABLED: bool = _bool("APOLLO_ENABLED", False)
+    APOLLO_API_KEY: str = os.getenv("APOLLO_API_KEY", "")
     PUBLIC_WEB_USER_AGENT: str = os.getenv("PUBLIC_WEB_USER_AGENT", "PixelPulseStudio/1.0")
     MAX_PROSPECTS_PER_RUN: int = int(os.getenv("MAX_PROSPECTS_PER_RUN", "50"))
     MIN_QUALIFICATION_SCORE: int = int(os.getenv("MIN_QUALIFICATION_SCORE", "60"))
