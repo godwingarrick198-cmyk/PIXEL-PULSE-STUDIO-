@@ -11,7 +11,8 @@ class ProspectingService:
     def __init__(self):
         self.s = get_settings()
         self.ai = AIService()
-        self.providers = [WebDiscoveryProvider(), OSMProvider(), ProductHuntProvider()]
+        self.web = WebDiscoveryProvider()
+        self.providers = [self.web, OSMProvider(), ProductHuntProvider()]
 
     def normalize_domain(self, url):
         if not url:
@@ -43,6 +44,15 @@ class ProspectingService:
             if len(all_items) >= limit * 2:
                 break
 
+        # Free enrichment pass: any provider that found a public website can now
+        # be checked for published company email/phone/contact pages. This is
+        # deliberately based on public websites only; no paid enrichment API.
+        try:
+            if self.s.WEB_DISCOVERY_ENABLED and all_items:
+                all_items = await self.web.enrich_items(all_items)
+        except Exception as e:
+            events.event("ERROR", component="contact_enrichment", error=str(e))
+
         saved, seen = [], set()
         for raw in all_items:
             domain = self.normalize_domain(raw.get("website") or raw.get("domain"))
@@ -65,6 +75,12 @@ class ProspectingService:
             if self.suppressed(db, raw):
                 continue
 
+            # Email outreach requires a real public address. Keep phone-only
+            # records out of the qualified outreach queue instead of inventing
+            # an address.
+            if not email:
+                continue
+
             q = self.ai.qualify({**raw, "domain": domain})
             if not q.qualified or q.score < self.s.MIN_QUALIFICATION_SCORE or q.recommended_service == "SKIP":
                 continue
@@ -79,7 +95,7 @@ class ProspectingService:
                 city=raw.get("city"),
                 founder_name=raw.get("founder_name"),
                 contact_name=raw.get("contact_name"),
-                contact_email=email or None,
+                contact_email=email,
                 contact_phone=raw.get("contact_phone"),
                 public_contact_url=raw.get("public_contact_url"),
                 linkedin_url=raw.get("linkedin_url"),
