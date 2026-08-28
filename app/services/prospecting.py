@@ -15,7 +15,6 @@ SOCIAL_HOSTS = {'facebook.com','linkedin.com','instagram.com','youtube.com','x.c
 class ProspectingService:
     def __init__(self):
         self.s=get_settings(); self.ai=AIService()
-        # Reliable structured provider first; public-web/OSM are fallbacks.
         self.providers=[ApolloProvider(), WebDiscoveryProvider(), OSMProvider(), ProductHuntProvider()]
 
     def normalize_domain(self,url):
@@ -32,7 +31,6 @@ class ProspectingService:
         return bool(clauses and db.scalar(select(SuppressionList.id).where(or_(*clauses))))
 
     async def _enrich_public_contact(self, raw):
-        """Find a real public website/email; never invent an address."""
         if raw.get('contact_email') and raw.get('website'):
             return raw
         s=self.s; name=(raw.get('company_name') or '').strip(); country=(raw.get('country') or '').strip(); website=raw.get('website')
@@ -44,18 +42,19 @@ class ProspectingService:
                     r=await client.get('https://html.duckduckgo.com/html/',params={'q':q})
                     if r.is_success:
                         soup=BeautifulSoup(r.text,'html.parser')
-                        for a in soup.select('a.result__a'):
+                        for a in soup.select('a[href]'):
                             href=a.get('href',''); p=urlparse(href); dom=p.netloc.lower().removeprefix('www.')
                             if p.scheme in ('http','https') and dom and not any(dom==x or dom.endswith('.'+x) for x in SOCIAL_HOSTS):
                                 website=f'{p.scheme}://{p.netloc}'; break
                 if not website: return raw
                 raw['website']=website; raw['domain']=self.normalize_domain(website)
-                base=website.rstrip('/'); candidates=[website]+[urljoin(base,path) for path in ('/contact','/contact-us','/about','/team')]
+                base=website.rstrip('/'); candidates=[website]+[urljoin(base,path) for path in ('/contact','/contact-us','/about','/about-us','/team','/company')]
                 for url in candidates:
                     try:
                         r=await client.get(url)
                         if not r.is_success: continue
-                        soup=BeautifulSoup(r.text,'html.parser'); found=[]
+                        soup=BeautifulSoup(r.text, 'html.parser')
+                        found=[]
                         found += [a.get('href','')[7:].split('?')[0] for a in soup.select('a[href^="mailto:"]')]
                         found += EMAIL_RE.findall(soup.get_text(' ',strip=True))
                         for email in found:
@@ -70,8 +69,6 @@ class ProspectingService:
 
     async def discover(self,db,query,limit):
         all_items=[]
-        # Providers are attempted in priority order. A structured provider is
-        # preferred; other providers remain available as fallbacks.
         for provider in self.providers:
             try:
                 items=await provider.discover_prospects(query)
@@ -86,12 +83,16 @@ class ProspectingService:
             raw=await self._enrich_public_contact(dict(raw))
             domain=self.normalize_domain(raw.get('website') or raw.get('domain'))
             email=(raw.get('contact_email') or '').strip().lower()
+            phone=(raw.get('contact_phone') or '').strip()
             name=(raw.get('company_name') or '').strip()
 
-            # Hard gate: only qualified prospects with a verified public/work
-            # website AND a usable email enter the database.
-            if not name or not domain or not email or not EMAIL_RE.fullmatch(email):
+            # A public website plus either email OR phone is enough to save a
+            # prospect. Email is preferred for outreach, but phone-only leads
+            # are still useful and visible in the dashboard.
+            if not name or not domain or (not email and not phone):
                 continue
+            if email and not EMAIL_RE.fullmatch(email):
+                email=''
 
             key=domain or email or name.lower()
             if key in seen: continue
@@ -103,12 +104,10 @@ class ProspectingService:
             if checks and db.scalar(select(Prospect).where(or_(*checks))): continue
             if self.suppressed(db,raw): continue
 
-            # Existing Gemini qualification remains the decision gate after
-            # discovery and enrichment.
             q=self.ai.qualify({**raw,'domain':domain})
             if not q.qualified or q.score < self.s.MIN_QUALIFICATION_SCORE or q.recommended_service=='SKIP': continue
 
-            p=Prospect(company_name=name,website=raw.get('website'),domain=domain,industry=raw.get('industry') or q.company_type,description=raw.get('description'),country=raw.get('country'),city=raw.get('city'),founder_name=raw.get('founder_name'),contact_name=raw.get('contact_name'),contact_email=email,contact_phone=raw.get('contact_phone'),public_contact_url=raw.get('public_contact_url'),linkedin_url=raw.get('linkedin_url'),source=raw.get('source'),source_id=str(raw.get('source_id') or ''),source_url=raw.get('source_url'),service_match=q.recommended_service,qualification_score=q.score,estimated_budget=q.estimated_budget,purchase_likelihood=q.purchase_likelihood,status='QUALIFIED',qualification_json=q.model_dump())
+            p=Prospect(company_name=name,website=raw.get('website'),domain=domain,industry=raw.get('industry') or q.company_type,description=raw.get('description'),country=raw.get('country'),city=raw.get('city'),founder_name=raw.get('founder_name'),contact_name=raw.get('contact_name'),contact_email=email or None,contact_phone=phone or None,public_contact_url=raw.get('public_contact_url'),linkedin_url=raw.get('linkedin_url'),source=raw.get('source'),source_id=str(raw.get('source_id') or ''),source_url=raw.get('source_url'),service_match=q.recommended_service,qualification_score=q.score,estimated_budget=q.estimated_budget,purchase_likelihood=q.purchase_likelihood,status='QUALIFIED',qualification_json=q.model_dump())
             db.add(p); db.flush(); saved.append(p); events.event('PROSPECT_QUALIFIED',prospect_id=p.id,score=q.score)
             if len(saved)>=limit: break
         db.commit(); return saved
