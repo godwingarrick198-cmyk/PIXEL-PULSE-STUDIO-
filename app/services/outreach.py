@@ -35,17 +35,43 @@ class OutreachService:
             timeout = 20.0
         timeout = max(5.0, min(timeout, 60.0))
 
-        await asyncio.wait_for(
-            aiosmtplib.send(
-                msg,
-                hostname=self.s.SMTP_HOST,
-                port=self.s.SMTP_PORT,
-                start_tls=True,
-                username=self.s.SMTP_USERNAME,
-                password=self.s.SMTP_PASSWORD,
-                timeout=timeout,
-            ),
-            timeout=timeout + 5,
+        configured_port = int(self.s.SMTP_PORT or 587)
+        attempts = []
+        if configured_port == 465:
+            attempts = [(465, True)]
+        elif configured_port == 587:
+            # Render deployments can occasionally have trouble reaching Gmail on
+            # STARTTLS/587. Try the standard implicit-TLS endpoint as a fallback.
+            attempts = [(587, False), (465, True)]
+        else:
+            attempts = [(configured_port, False), (465, True)]
+
+        last_error = None
+        for port, implicit_tls in attempts:
+            try:
+                kwargs = {
+                    "hostname": self.s.SMTP_HOST,
+                    "port": port,
+                    "username": self.s.SMTP_USERNAME,
+                    "password": self.s.SMTP_PASSWORD,
+                    "timeout": timeout,
+                }
+                if implicit_tls:
+                    kwargs["use_tls"] = True
+                    kwargs["start_tls"] = False
+                else:
+                    kwargs["start_tls"] = True
+                    kwargs["use_tls"] = False
+
+                await asyncio.wait_for(aiosmtplib.send(msg, **kwargs), timeout=timeout + 5)
+                return
+            except Exception as exc:
+                last_error = exc
+                events.event("SMTP_ATTEMPT_FAILED", host=self.s.SMTP_HOST, port=port, error=str(exc))
+
+        raise RuntimeError(
+            f"Unable to connect to {self.s.SMTP_HOST} on SMTP ports "
+            f"{', '.join(str(p) for p, _ in attempts)}: {last_error}"
         )
 
     def suppressed(self, db, prospect):
@@ -82,9 +108,14 @@ class OutreachService:
                 db.commit()
             return {"status": "SKIPPED", "reason": "suppressed", "prospect_id": prospect.id}
 
-        # A failed or already-contacted prospect is never retried automatically.
-        if cp and cp.status in ("FAILED", "CONTACTED", "SUPPRESSED"):
+        # Automatic/background outreach never retries a failed or contacted lead.
+        # An explicit /outreach CAMPAIGN_ID PROSPECT_ID request is a deliberate retry.
+        explicit_retry = cp and cp.status == "FAILED"
+        if cp and cp.status in ("CONTACTED", "SUPPRESSED"):
             return {"status": "SKIPPED", "reason": cp.status.lower(), "prospect_id": prospect.id}
+        if explicit_retry:
+            cp.status = "QUEUED"
+            db.commit()
 
         subject, body = self.ai.generate_outreach(
             prospect.__dict__, prospect.service_match or "presentation design"
