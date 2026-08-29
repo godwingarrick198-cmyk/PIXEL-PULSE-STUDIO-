@@ -1,10 +1,8 @@
-import asyncio
 import base64
 import uuid
 from datetime import datetime, timezone
 from email.message import EmailMessage
 
-import aiosmtplib
 import httpx
 from sqlalchemy import select
 
@@ -20,14 +18,19 @@ class OutreachService:
         self.ai = AIService()
 
     async def send_email_gmail_api(self, to_email, subject, body):
-        if not self.s.GMAIL_CLIENT_ID or not self.s.GMAIL_CLIENT_SECRET or not self.s.GMAIL_REFRESH_TOKEN:
-            raise RuntimeError("Gmail API credentials are not configured")
+        """Send mail through Gmail's HTTPS API. Render does not need SMTP access."""
+        required = {
+            "GMAIL_CLIENT_ID": self.s.GMAIL_CLIENT_ID,
+            "GMAIL_CLIENT_SECRET": self.s.GMAIL_CLIENT_SECRET,
+            "GMAIL_REFRESH_TOKEN": self.s.GMAIL_REFRESH_TOKEN,
+            "GMAIL_FROM_EMAIL": self.s.GMAIL_FROM_EMAIL,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise RuntimeError(
+                "Gmail API is not configured. Missing Render variable(s): " + ", ".join(missing)
+            )
 
-        sender = self.s.GMAIL_FROM_EMAIL or self.s.SMTP_FROM_EMAIL or self.s.SMTP_USERNAME
-        if not sender:
-            raise RuntimeError("GMAIL_FROM_EMAIL is not configured")
-
-        # Refresh the short-lived Gmail access token over HTTPS.
         async with httpx.AsyncClient(timeout=20.0) as client:
             token_response = await client.post(
                 "https://oauth2.googleapis.com/token",
@@ -39,12 +42,13 @@ class OutreachService:
                 },
             )
             token_response.raise_for_status()
-            access_token = token_response.json().get("access_token")
+            token_data = token_response.json()
+            access_token = token_data.get("access_token")
             if not access_token:
                 raise RuntimeError("Google did not return an access token")
 
             msg = EmailMessage()
-            msg["From"] = sender
+            msg["From"] = self.s.GMAIL_FROM_EMAIL
             msg["To"] = to_email
             msg["Subject"] = subject
             msg.set_content(body)
@@ -57,63 +61,13 @@ class OutreachService:
             )
             response.raise_for_status()
 
-    async def send_email_smtp(self, to_email, subject, body):
-        if not self.s.SMTP_USERNAME or not self.s.SMTP_PASSWORD:
-            raise RuntimeError("Gmail SMTP credentials are not configured")
-
-        msg = EmailMessage()
-        msg["From"] = self.s.SMTP_FROM_EMAIL or self.s.SMTP_USERNAME
-        msg["To"] = to_email
-        msg["Subject"] = subject
-        msg.set_content(body)
-
-        try:
-            timeout = float(getattr(self.s, "SMTP_TIMEOUT_SECONDS", 20))
-        except (TypeError, ValueError):
-            timeout = 20.0
-        timeout = max(5.0, min(timeout, 60.0))
-
-        configured_port = int(self.s.SMTP_PORT or 587)
-        attempts = [(465, True)] if configured_port == 465 else [(587, False), (465, True)]
-        last_error = None
-        for port, implicit_tls in attempts:
-            try:
-                kwargs = {
-                    "hostname": self.s.SMTP_HOST,
-                    "port": port,
-                    "username": self.s.SMTP_USERNAME,
-                    "password": self.s.SMTP_PASSWORD,
-                    "timeout": timeout,
-                    "start_tls": not implicit_tls,
-                    "use_tls": implicit_tls,
-                }
-                await asyncio.wait_for(aiosmtplib.send(msg, **kwargs), timeout=timeout + 5)
-                return
-            except Exception as exc:
-                last_error = exc
-                events.event("SMTP_ATTEMPT_FAILED", host=self.s.SMTP_HOST, port=port, error=str(exc))
-        raise RuntimeError(
-            f"Unable to connect to {self.s.SMTP_HOST} on SMTP ports "
-            f"{', '.join(str(p) for p, _ in attempts)}: {last_error}"
-        )
-
     async def send_email(self, to_email, subject, body):
         if not to_email:
             raise ValueError("Prospect has no email address")
-
-        # Prefer Gmail's HTTPS API on Render. This avoids the SMTP port timeout
-        # that was blocking outreach. SMTP remains available as a fallback only
-        # when Gmail API credentials have not been configured.
-        if self.s.GMAIL_CLIENT_ID and self.s.GMAIL_CLIENT_SECRET and self.s.GMAIL_REFRESH_TOKEN:
-            try:
-                await self.send_email_gmail_api(to_email, subject, body)
-                events.event("GMAIL_API_SENT", recipient=to_email)
-                return
-            except Exception as exc:
-                events.event("GMAIL_API_FAILED", recipient=to_email, error=str(exc))
-                raise RuntimeError(f"Gmail API delivery failed: {exc}") from exc
-
-        await self.send_email_smtp(to_email, subject, body)
+        # IMPORTANT: do not fall back to SMTP. Render cannot reach Gmail SMTP
+        # reliably, and retrying it caused repeated timeout failures.
+        await self.send_email_gmail_api(to_email, subject, body)
+        events.event("GMAIL_API_SENT", recipient=to_email)
 
     def suppressed(self, db, prospect):
         email = (prospect.contact_email or "").lower() if prospect.contact_email else None
@@ -149,7 +103,7 @@ class OutreachService:
                 db.commit()
             return {"status": "SKIPPED", "reason": "suppressed", "prospect_id": prospect.id}
 
-        # Automatic/background outreach never retries a failed or contacted lead.
+        # Background/queued outreach never retries a failed or contacted lead.
         # An explicit /outreach CAMPAIGN_ID PROSPECT_ID request is a deliberate retry.
         explicit_retry = cp and cp.status == "FAILED"
         if cp and cp.status in ("CONTACTED", "SUPPRESSED"):
