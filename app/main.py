@@ -6,25 +6,28 @@ from app.api.routes import router
 from app.api.telegram import router as telegram_router
 from app.workers.scheduler import scheduler
 from app.bot import set_webhook
+from app.core.config import get_settings
 
+settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    try:
-        scheduler.start()
-    except Exception:
-        pass
+    if settings.SCHEDULER_ENABLED:
+        try:
+            scheduler.start()
+        except Exception:
+            pass
     try:
         await set_webhook()
     except Exception:
         pass
     yield
-    try:
-        scheduler.shutdown(wait=False)
-    except Exception:
-        pass
-
+    if settings.SCHEDULER_ENABLED:
+        try:
+            scheduler.shutdown(wait=False)
+        except Exception:
+            pass
 
 app = FastAPI(
     title="Pixel Pulse Studio",
@@ -35,7 +38,6 @@ app = FastAPI(
 app.include_router(router)
 app.include_router(telegram_router)
 
-
 @app.get("/")
 def root():
-    return {"name": "Pixel Pulse Studio", "status": "running"}
+    return {"name": "Pixel Pulse Studio", "status": "running", "scheduler_enabled": settings.SCHEDULER_ENABLED}
