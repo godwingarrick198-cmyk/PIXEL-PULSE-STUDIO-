@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, Header, HTTPException, Request
 from sqlalchemy import select, func
 from app.db.session import SessionLocal
@@ -11,6 +12,8 @@ from app.bot import send_message, webhook_secret
 
 router = APIRouter(prefix='/api/telegram')
 settings = get_settings(); campaigns = CampaignService(); presentations = PresentationService(); prospecting = ProspectingService(); outreach = OutreachService()
+# Telegram may retry a slow webhook request. Never allow duplicate hunts to run concurrently.
+HUNT_LOCK = asyncio.Lock()
 
 def authorized(chat_id):
     admin = getattr(settings, 'TELEGRAM_ADMIN_CHAT_ID', '')
@@ -55,20 +58,25 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 await send_message(chat_id,f'Campaign created.\nID: {c.campaign_id}\nName: {c.name}\nTarget: {c.target_prospects}\nStatus: {c.status}\n\nStart it with:\n/resume {c.campaign_id}\nThen hunt with:\n/hunt {c.campaign_id}')
         elif command == '/hunt':
             if len(parts)!=2: await send_message(chat_id,'Usage: /hunt PPS-XXXXXXXXXX')
+            elif HUNT_LOCK.locked():
+                await send_message(chat_id,'⏳ A hunt is already running. Please wait for the current hunt to finish; duplicate Telegram retries are blocked.')
             else:
-                c=db.scalar(select(Campaign).where(Campaign.campaign_id==parts[1]))
-                if not c: await send_message(chat_id,'Campaign not found. Use /campaigns to see the exact campaign ID.')
-                elif c.status not in ('RUNNING','DRAFT'): await send_message(chat_id,f'Campaign {c.name} is {c.status}. Resume it before hunting.')
-                elif c.remaining_prospects <= 0: await send_message(chat_id,'This campaign has no remaining prospect capacity.')
-                else:
-                    limit=min(c.remaining_prospects,c.daily_limit,settings.MAX_PROSPECTS_PER_RUN); query={'industry': c.industries[0] if c.industries else '', 'country': c.countries[0] if c.countries else '', 'service': c.services[0] if c.services else '', 'limit': limit}
-                    await send_message(chat_id,f'🔎 Hunting up to {limit} qualified prospects for {c.name}...'); found=await prospecting.discover(db,query,limit); linked=0
-                    for p in found:
-                        if not db.scalar(select(CampaignProspect.id).where(CampaignProspect.campaign_id==c.id,CampaignProspect.prospect_id==p.id)):
-                            db.add(CampaignProspect(campaign_id=c.id,prospect_id=p.id,status='QUEUED')); linked+=1
-                    c.remaining_prospects=max(0,c.remaining_prospects-linked); c.completed_prospects+=linked; db.commit()
-                    report=f'🎯 HUNT COMPLETE\nCampaign: {c.name}\nCampaign ID: {c.campaign_id}\nFound: {len(found)}\nQualified/added: {linked}\nRemaining capacity: {c.remaining_prospects}'
-                    await send_message(chat_id,'✅ Hunt complete.\nQualified prospects found: '+str(len(found))+'\nAdded to campaign: '+str(linked)+'\nRemaining campaign capacity: '+str(c.remaining_prospects)); await notify_channel(report)
+                async with HUNT_LOCK:
+                    c=db.scalar(select(Campaign).where(Campaign.campaign_id==parts[1]))
+                    if not c: await send_message(chat_id,'Campaign not found. Use /campaigns to see the exact campaign ID.')
+                    elif c.status not in ('RUNNING','DRAFT'): await send_message(chat_id,f'Campaign {c.name} is {c.status}. Resume it before hunting.')
+                    elif c.remaining_prospects <= 0: await send_message(chat_id,'This campaign has no remaining prospect capacity.')
+                    else:
+                        limit=min(c.remaining_prospects,c.daily_limit,settings.MAX_PROSPECTS_PER_RUN,10)
+                        query={'industry': c.industries[0] if c.industries else '', 'country': c.countries[0] if c.countries else '', 'service': c.services[0] if c.services else '', 'limit': limit}
+                        await send_message(chat_id,f'🔎 Hunting up to {limit} qualified prospects for {c.name}...')
+                        found=await prospecting.discover(db,query,limit); linked=0
+                        for p in found:
+                            if not db.scalar(select(CampaignProspect.id).where(CampaignProspect.campaign_id==c.id,CampaignProspect.prospect_id==p.id)):
+                                db.add(CampaignProspect(campaign_id=c.id,prospect_id=p.id,status='QUEUED')); linked+=1
+                        c.remaining_prospects=max(0,c.remaining_prospects-linked); c.completed_prospects+=linked; db.commit()
+                        report=f'🎯 HUNT COMPLETE\nCampaign: {c.name}\nCampaign ID: {c.campaign_id}\nFound: {len(found)}\nQualified/added: {linked}\nRemaining capacity: {c.remaining_prospects}'
+                        await send_message(chat_id,'✅ Hunt complete.\nQualified prospects found: '+str(len(found))+'\nAdded to campaign: '+str(linked)+'\nRemaining campaign capacity: '+str(c.remaining_prospects)); await notify_channel(report)
         elif command == '/outreach':
             if len(parts) not in (2,3): await send_message(chat_id,'Usage: /outreach CAMPAIGN_ID [PROSPECT_ID]\nFirst test sends only one email.')
             else:
