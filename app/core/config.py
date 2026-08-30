@@ -34,8 +34,8 @@ class Settings:
     MAX_DAILY_OUTREACH: int = int(os.getenv("MAX_DAILY_OUTREACH", "100"))
     MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "20"))
     DELIVERY_TOKEN_TTL_HOURS: int = int(os.getenv("DELIVERY_TOKEN_TTL_HOURS", "72"))
+    SCHEDULER_ENABLED: bool = _bool("SCHEDULER_ENABLED", False)
 
-    # Legacy SMTP settings. Kept as a fallback for environments where SMTP is reachable.
     SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
     SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "")
@@ -43,8 +43,6 @@ class Settings:
     SMTP_FROM_NAME: str = os.getenv("SMTP_FROM_NAME", "Pixel Pulse Studio")
     SMTP_FROM_EMAIL: str = os.getenv("SMTP_FROM_EMAIL", "")
 
-    # Gmail API (HTTPS) settings. When all three are present, API delivery is used
-    # instead of SMTP, avoiding Render's blocked SMTP connection path.
     GMAIL_CLIENT_ID: str = os.getenv("GMAIL_CLIENT_ID", "")
     GMAIL_CLIENT_SECRET: str = os.getenv("GMAIL_CLIENT_SECRET", "")
     GMAIL_REFRESH_TOKEN: str = os.getenv("GMAIL_REFRESH_TOKEN", "")
