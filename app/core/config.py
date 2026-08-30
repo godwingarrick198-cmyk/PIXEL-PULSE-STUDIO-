@@ -36,6 +36,10 @@ class Settings:
     DELIVERY_TOKEN_TTL_HOURS: int = int(os.getenv("DELIVERY_TOKEN_TTL_HOURS", "72"))
     SCHEDULER_ENABLED: bool = _bool("SCHEDULER_ENABLED", False)
 
+    BREVO_API_KEY: str = os.getenv("BREVO_API_KEY", "")
+    BREVO_FROM_EMAIL: str = os.getenv("BREVO_FROM_EMAIL", "")
+    BREVO_FROM_NAME: str = os.getenv("BREVO_FROM_NAME", "Pixel Pulse Studio")
+
     SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
     SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "")
