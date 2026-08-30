@@ -1,17 +1,18 @@
-import asyncio
+import asyncio, uuid
 from fastapi import APIRouter, Header, HTTPException, Request
 from sqlalchemy import select, func
 from app.db.session import SessionLocal
-from app.models.entities import Campaign, CampaignProspect, Prospect, Order, OutreachMessage
+from app.models.entities import Campaign, CampaignProspect, Prospect, Order, OutreachMessage, Customer, Payment
 from app.services.campaigns import CampaignService
 from app.services.presentation import PresentationService
 from app.services.prospecting import ProspectingService
 from app.services.outreach import OutreachService
+from app.services.flutterwave import FlutterwaveService
 from app.core.config import get_settings
 from app.bot import send_message, webhook_secret
 
 router = APIRouter(prefix='/api/telegram')
-settings = get_settings(); campaigns = CampaignService(); presentations = PresentationService(); prospecting = ProspectingService(); outreach = OutreachService()
+settings = get_settings(); campaigns = CampaignService(); presentations = PresentationService(); prospecting = ProspectingService(); outreach = OutreachService(); flw = FlutterwaveService()
 # Telegram may retry a slow webhook request. Never allow duplicate hunts to run concurrently.
 HUNT_LOCK = asyncio.Lock()
 
@@ -32,7 +33,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     update = await request.json(); message = update.get('message') or {}; chat = message.get('chat') or {}; chat_id = chat.get('id'); text = (message.get('text') or '').strip()
     if not chat_id or not text: return {'ok': True}
     if text.startswith('/start'):
-        await send_message(chat_id, f'Pixel Pulse Studio is online. Your Telegram chat ID is {chat_id}.\n\nCommands:\n/status\n/campaigns\n/newcampaign NAME|TARGET|DAYS|INDUSTRY|COUNTRY|SERVICE\n/hunt CAMPAIGN_ID\n/outreach CAMPAIGN_ID [PROSPECT_ID]\n/prospects\n/orders\n/pause CAMPAIGN_ID\n/resume CAMPAIGN_ID\n/stop CAMPAIGN_ID\n/generate ORDER_ID')
+        await send_message(chat_id, f'Pixel Pulse Studio is online. Your Telegram chat ID is {chat_id}.\n\nCommands:\n/status\n/campaigns\n/newcampaign NAME|TARGET|DAYS|INDUSTRY|COUNTRY|SERVICE\n/hunt CAMPAIGN_ID\n/outreach CAMPAIGN_ID [PROSPECT_ID]\n/prospects\n/orders\n/neworder PACKAGE|NAME|COMPANY|EMAIL|PROSPECT_ID\n/order ORDER_ID\n/pause CAMPAIGN_ID\n/resume CAMPAIGN_ID\n/stop CAMPAIGN_ID\n/generate ORDER_DATABASE_ID')
         return {'ok': True}
     if not authorized(chat_id):
         await send_message(chat_id, 'This bot is online, but this chat is not authorized for controls. Add your Telegram chat ID to TELEGRAM_ADMIN_CHAT_ID in Render.')
@@ -94,6 +95,36 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                             msg=f'📧 OUTREACH SENT\nCampaign: {c.name}\nCampaign ID: {c.campaign_id}\nCompany: {result.get("company_name")}\nProspect ID: {result.get("prospect_id")}\nMessage ID: {result.get("message_id")}\nStatus: SENT'
                             await send_message(chat_id,msg); await notify_channel(msg)
                         else: await send_message(chat_id,f'Outreach {result.get("status")}: {result.get("reason") or result.get("error")}')
+        elif command == '/neworder':
+            fields=[x.strip() for x in arg.split('|')]
+            if len(fields) not in (4,5):
+                await send_message(chat_id,'Usage:\n/neworder PACKAGE|NAME|COMPANY|EMAIL|PROSPECT_ID\nPROSPECT_ID is optional.\nExample:\n/neworder STARTER|Test Customer|Test Company|you@example.com|1')
+            else:
+                package,name,company,email=fields[:4]; prospect_id=int(fields[4]) if len(fields)==5 and fields[4] else None
+                prices={'STARTER':settings.STARTER_PRICE,'PROFESSIONAL':settings.PROFESSIONAL_PRICE,'PREMIUM':settings.PREMIUM_PRICE}
+                package=package.upper()
+                if package not in prices: raise ValueError('Unsupported package. Use STARTER, PROFESSIONAL, or PREMIUM.')
+                if '@' not in email or '.' not in email.split('@')[-1]: raise ValueError('Please provide a valid customer email.')
+                customer=Customer(name=name,company_name=company or None,email=email,prospect_id=prospect_id); db.add(customer); db.flush()
+                order=Order(order_id='PPS-ORD-'+uuid.uuid4().hex[:12].upper(),customer_id=customer.id,prospect_id=prospect_id,package=package,amount=prices[package],currency=settings.SERVICE_CURRENCY,status='PENDING'); db.add(order); db.flush()
+                reference='PPS-'+order.order_id+'-'+uuid.uuid4().hex[:6].upper()
+                payment=Payment(payment_id='PAY-'+uuid.uuid4().hex[:10],order_id=order.id,reference=reference,amount=order.amount,currency=order.currency); db.add(payment); db.commit()
+                try:
+                    result=await flw.create_payment(reference,order.amount,order.currency,email,name,order.order_id)
+                    payment.payment_url=result.get('link'); db.commit()
+                    await send_message(chat_id,f'🧾 ORDER CREATED\nOrder: {order.order_id}\nPackage: {order.package}\nCustomer: {name}\nCompany: {company}\nAmount: {order.amount:g} {order.currency}\nStatus: {order.status}\nReference: {reference}\n\n💳 Payment link:\n{payment.payment_url or "Not available"}')
+                except Exception as e:
+                    db.rollback(); await send_message(chat_id,f'Order was created but payment-link creation failed.\nOrder: {order.order_id}\nReason: {e}')
+        elif command == '/order':
+            if len(parts)!=2: await send_message(chat_id,'Usage: /order ORDER_ID\nExample: /order PPS-ORD-XXXXXXXXXXXX')
+            else:
+                value=parts[1]; order=db.scalar(select(Order).where(Order.order_id==value))
+                if not order and value.isdigit(): order=db.get(Order,int(value))
+                if not order: await send_message(chat_id,'Order not found. Use /orders to see existing order IDs.')
+                else:
+                    payment=db.scalar(select(Payment).where(Payment.order_id==order.id))
+                    customer=db.get(Customer,order.customer_id)
+                    await send_message(chat_id,f'📦 ORDER\nOrder: {order.order_id}\nCustomer: {customer.name if customer else "Unknown"}\nCompany: {customer.company_name if customer else "Unknown"}\nPackage: {order.package}\nAmount: {order.amount:g} {order.currency}\nStatus: {order.status}\nPayment: {payment.status if payment else "NOT CREATED"}\nPayment link: {payment.payment_url if payment and payment.payment_url else "Not available"}')
         elif command in ('/pause','/resume','/stop'):
             if len(parts)!=2: await send_message(chat_id,f'Usage: {command} PPS-XXXXXXXXXX')
             else:
