@@ -15,7 +15,13 @@ SOCIAL_HOSTS = {'facebook.com','linkedin.com','instagram.com','youtube.com','x.c
 class ProspectingService:
     def __init__(self):
         self.s=get_settings(); self.ai=AIService()
-        self.providers=[ApolloProvider(), WebDiscoveryProvider(), OSMProvider(), ProductHuntProvider()]
+        # Only instantiate providers that are explicitly enabled.
+        # This prevents disabled providers such as Apollo from being called.
+        self.providers=[]
+        if self.s.WEB_DISCOVERY_ENABLED: self.providers.append(WebDiscoveryProvider())
+        if self.s.OSM_ENABLED: self.providers.append(OSMProvider())
+        if self.s.PRODUCT_HUNT_ENABLED: self.providers.append(ProductHuntProvider())
+        if self.s.APOLLO_ENABLED and self.s.APOLLO_API_KEY: self.providers.append(ApolloProvider())
 
     def normalize_domain(self,url):
         if not url: return None
@@ -68,6 +74,8 @@ class ProspectingService:
         return raw
 
     async def discover(self,db,query,limit):
+        if limit <= 0 or not self.providers:
+            return []
         all_items=[]
         for provider in self.providers:
             try:
@@ -85,15 +93,8 @@ class ProspectingService:
             email=(raw.get('contact_email') or '').strip().lower()
             phone=(raw.get('contact_phone') or '').strip()
             name=(raw.get('company_name') or '').strip()
-
-            # A public website plus either email OR phone is enough to save a
-            # prospect. Email is preferred for outreach, but phone-only leads
-            # are still useful and visible in the dashboard.
-            if not name or not domain or (not email and not phone):
-                continue
-            if email and not EMAIL_RE.fullmatch(email):
-                email=''
-
+            if not name or not domain or (not email and not phone): continue
+            if email and not EMAIL_RE.fullmatch(email): email=''
             key=domain or email or name.lower()
             if key in seen: continue
             seen.add(key)
@@ -103,10 +104,8 @@ class ProspectingService:
             if name: checks.append(func.lower(Prospect.company_name)==name.lower())
             if checks and db.scalar(select(Prospect).where(or_(*checks))): continue
             if self.suppressed(db,raw): continue
-
             q=self.ai.qualify({**raw,'domain':domain})
             if not q.qualified or q.score < self.s.MIN_QUALIFICATION_SCORE or q.recommended_service=='SKIP': continue
-
             p=Prospect(company_name=name,website=raw.get('website'),domain=domain,industry=raw.get('industry') or q.company_type,description=raw.get('description'),country=raw.get('country'),city=raw.get('city'),founder_name=raw.get('founder_name'),contact_name=raw.get('contact_name'),contact_email=email or None,contact_phone=phone or None,public_contact_url=raw.get('public_contact_url'),linkedin_url=raw.get('linkedin_url'),source=raw.get('source'),source_id=str(raw.get('source_id') or ''),source_url=raw.get('source_url'),service_match=q.recommended_service,qualification_score=q.score,estimated_budget=q.estimated_budget,purchase_likelihood=q.purchase_likelihood,status='QUALIFIED',qualification_json=q.model_dump())
             db.add(p); db.flush(); saved.append(p); events.event('PROSPECT_QUALIFIED',prospect_id=p.id,score=q.score)
             if len(saved)>=limit: break
