@@ -2,7 +2,7 @@ import asyncio, uuid
 from fastapi import APIRouter, Header, HTTPException, Request
 from sqlalchemy import select, func
 from app.db.session import SessionLocal
-from app.models.entities import Campaign, CampaignProspect, Prospect, Order, OutreachMessage, Customer, Payment
+from app.models.entities import Campaign, CampaignProspect, Prospect, Order, OutreachMessage, Customer, Payment, OnboardingForm
 from app.services.campaigns import CampaignService
 from app.services.presentation import PresentationService
 from app.services.prospecting import ProspectingService
@@ -33,7 +33,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     update = await request.json(); message = update.get('message') or {}; chat = message.get('chat') or {}; chat_id = chat.get('id'); text = (message.get('text') or '').strip()
     if not chat_id or not text: return {'ok': True}
     if text.startswith('/start'):
-        await send_message(chat_id, f'Pixel Pulse Studio is online. Your Telegram chat ID is {chat_id}.\n\nCommands:\n/status\n/campaigns\n/newcampaign NAME|TARGET|DAYS|INDUSTRY|COUNTRY|SERVICE\n/hunt CAMPAIGN_ID\n/outreach CAMPAIGN_ID [PROSPECT_ID]\n/prospects\n/orders\n/neworder PACKAGE|NAME|COMPANY|EMAIL|PROSPECT_ID\n/order ORDER_ID\n/pause CAMPAIGN_ID\n/resume CAMPAIGN_ID\n/stop CAMPAIGN_ID\n/generate ORDER_DATABASE_ID')
+        await send_message(chat_id, f'Pixel Pulse Studio is online. Your Telegram chat ID is {chat_id}.\n\nCommands:\n/status\n/campaigns\n/newcampaign NAME|TARGET|DAYS|INDUSTRY|COUNTRY|SERVICE\n/hunt CAMPAIGN_ID\n/outreach CAMPAIGN_ID [PROSPECT_ID]\n/prospects\n/orders\n/neworder PACKAGE|NAME|COMPANY|EMAIL|PROSPECT_ID\n/order ORDER_ID\n/pause CAMPAIGN_ID\n/resume CAMPAIGN_ID\n/stop CAMPAIGN_ID\n/generate ORDER_ID')
         return {'ok': True}
     if not authorized(chat_id):
         await send_message(chat_id, 'This bot is online, but this chat is not authorized for controls. Add your Telegram chat ID to TELEGRAM_ADMIN_CHAT_ID in Render.')
@@ -134,13 +134,25 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         elif command == '/orders':
             items=db.scalars(select(Order).order_by(Order.created_at.desc()).limit(10)).all(); await send_message(chat_id,'No orders found.' if not items else 'Recent orders:\n'+'\n'.join(f'{o.order_id} | {o.package} | {o.amount:g} {o.currency} | {o.status}' for o in items))
         elif command == '/generate':
-            if len(parts)!=2: await send_message(chat_id,'Usage: /generate ORDER_DATABASE_ID')
+            if len(parts)!=2: await send_message(chat_id,'Usage: /generate ORDER_ID')
             else:
-                o=db.get(Order,int(parts[1]))
-                if not o: await send_message(chat_id,'Order not found.')
+                value=parts[1]; o=db.scalar(select(Order).where(Order.order_id==value))
+                if not o and value.isdigit(): o=db.get(Order,int(value))
+                if not o: await send_message(chat_id,'Order not found. Use /orders to see existing order IDs.')
                 elif o.status not in ('PAID','IN_PRODUCTION','QC','READY'): await send_message(chat_id,f'Order {o.order_id} is {o.status}. Payment must be PAID before generation.')
                 else:
                     try:
+                        form=db.scalar(select(OnboardingForm).where(OnboardingForm.order_id==o.id))
+                        # TEST-ONLY onboarding: the synthetic Test Company order can exercise the
+                        # production presentation generator without requiring the real customer form.
+                        customer=db.get(Customer,o.customer_id) if o.customer_id else None
+                        if (not form or form.status!='COMPLETE') and customer and customer.company_name == 'Test Company':
+                            test_data={'company_name':customer.company_name,'contact_name':customer.name,'email':customer.email,'industry':'business','service':'Corporate Presentation','objective':'Create a professional test presentation to validate the generation pipeline.','audience':'Business decision makers','key_message':'Test presentation generated successfully by Pixel Pulse Studio.','style':'Premium Minimal','notes':'TEST MODE ONLY — synthetic onboarding data.'}
+                            if not form:
+                                form=OnboardingForm(order_id=o.id,data=test_data,status='COMPLETE'); db.add(form)
+                            else:
+                                form.data=test_data; form.status='COMPLETE'
+                            db.commit()
                         p=presentations.generate(db,o.id); await send_message(chat_id,f'Presentation ready for {o.order_id}.\nSlides: {len((p.strategy_json or {}).get("slides",[]))}\nPPTX: {settings.BASE_URL}/api/orders/{o.id}/presentation/pptx\nPDF: {settings.BASE_URL}/api/orders/{o.id}/presentation/pdf')
                     except ValueError as e: await send_message(chat_id,str(e))
         else: await send_message(chat_id,'Unknown command. Use /start to see commands.')
