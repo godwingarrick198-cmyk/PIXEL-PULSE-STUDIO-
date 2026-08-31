@@ -13,7 +13,6 @@ from app.bot import send_message, webhook_secret
 
 router = APIRouter(prefix='/api/telegram')
 settings = get_settings(); campaigns = CampaignService(); presentations = PresentationService(); prospecting = ProspectingService(); outreach = OutreachService(); flw = FlutterwaveService()
-# Telegram may retry a slow webhook request. Never allow duplicate hunts to run concurrently.
 HUNT_LOCK = asyncio.Lock()
 
 def authorized(chat_id):
@@ -59,8 +58,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 await send_message(chat_id,f'Campaign created.\nID: {c.campaign_id}\nName: {c.name}\nTarget: {c.target_prospects}\nStatus: {c.status}\n\nStart it with:\n/resume {c.campaign_id}\nThen hunt with:\n/hunt {c.campaign_id}')
         elif command == '/hunt':
             if len(parts)!=2: await send_message(chat_id,'Usage: /hunt PPS-XXXXXXXXXX')
-            elif HUNT_LOCK.locked():
-                await send_message(chat_id,'⏳ A hunt is already running. Please wait for the current hunt to finish; duplicate Telegram retries are blocked.')
+            elif HUNT_LOCK.locked(): await send_message(chat_id,'⏳ A hunt is already running. Please wait for the current hunt to finish; duplicate Telegram retries are blocked.')
             else:
                 async with HUNT_LOCK:
                     c=db.scalar(select(Campaign).where(Campaign.campaign_id==parts[1]))
@@ -68,16 +66,11 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     elif c.status not in ('RUNNING','DRAFT'): await send_message(chat_id,f'Campaign {c.name} is {c.status}. Resume it before hunting.')
                     elif c.remaining_prospects <= 0: await send_message(chat_id,'This campaign has no remaining prospect capacity.')
                     else:
-                        limit=min(c.remaining_prospects,c.daily_limit,settings.MAX_PROSPECTS_PER_RUN,10)
-                        query={'industry': c.industries[0] if c.industries else '', 'country': c.countries[0] if c.countries else '', 'service': c.services[0] if c.services else '', 'limit': limit}
-                        await send_message(chat_id,f'🔎 Hunting up to {limit} qualified prospects for {c.name}...')
-                        found=await prospecting.discover(db,query,limit); linked=0
+                        limit=min(c.remaining_prospects,c.daily_limit,settings.MAX_PROSPECTS_PER_RUN,10); query={'industry': c.industries[0] if c.industries else '', 'country': c.countries[0] if c.countries else '', 'service': c.services[0] if c.services else '', 'limit': limit}
+                        await send_message(chat_id,f'🔎 Hunting up to {limit} qualified prospects for {c.name}...'); found=await prospecting.discover(db,query,limit); linked=0
                         for p in found:
-                            if not db.scalar(select(CampaignProspect.id).where(CampaignProspect.campaign_id==c.id,CampaignProspect.prospect_id==p.id)):
-                                db.add(CampaignProspect(campaign_id=c.id,prospect_id=p.id,status='QUEUED')); linked+=1
-                        c.remaining_prospects=max(0,c.remaining_prospects-linked); c.completed_prospects+=linked; db.commit()
-                        report=f'🎯 HUNT COMPLETE\nCampaign: {c.name}\nCampaign ID: {c.campaign_id}\nFound: {len(found)}\nQualified/added: {linked}\nRemaining capacity: {c.remaining_prospects}'
-                        await send_message(chat_id,'✅ Hunt complete.\nQualified prospects found: '+str(len(found))+'\nAdded to campaign: '+str(linked)+'\nRemaining campaign capacity: '+str(c.remaining_prospects)); await notify_channel(report)
+                            if not db.scalar(select(CampaignProspect.id).where(CampaignProspect.campaign_id==c.id,CampaignProspect.prospect_id==p.id)): db.add(CampaignProspect(campaign_id=c.id,prospect_id=p.id,status='QUEUED')); linked+=1
+                        c.remaining_prospects=max(0,c.remaining_prospects-linked); c.completed_prospects+=linked; db.commit(); report=f'🎯 HUNT COMPLETE\nCampaign: {c.name}\nCampaign ID: {c.campaign_id}\nFound: {len(found)}\nQualified/added: {linked}\nRemaining capacity: {c.remaining_prospects}'; await send_message(chat_id,'✅ Hunt complete.\nQualified prospects found: '+str(len(found))+'\nAdded to campaign: '+str(linked)+'\nRemaining campaign capacity: '+str(c.remaining_prospects)); await notify_channel(report)
         elif command == '/outreach':
             if len(parts) not in (2,3): await send_message(chat_id,'Usage: /outreach CAMPAIGN_ID [PROSPECT_ID]\nFirst test sends only one email.')
             else:
@@ -86,45 +79,31 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 else:
                     prospect_id=int(parts[2]) if len(parts)==3 else None
                     if prospect_id is None:
-                        cp=db.scalar(select(CampaignProspect).where(CampaignProspect.campaign_id==c.id,CampaignProspect.status=='QUEUED').order_by(CampaignProspect.id.asc()))
-                        prospect_id=cp.prospect_id if cp else None
+                        cp=db.scalar(select(CampaignProspect).where(CampaignProspect.campaign_id==c.id,CampaignProspect.status=='QUEUED').order_by(CampaignProspect.id.asc())); prospect_id=cp.prospect_id if cp else None
                     if not prospect_id: await send_message(chat_id,'No queued prospect is available for outreach.')
                     else:
                         await send_message(chat_id,f'📧 Sending one test outreach for {c.name}...'); result=await outreach.send_one(db,code,prospect_id)
                         if result.get('status')=='SENT':
-                            msg=f'📧 OUTREACH SENT\nCampaign: {c.name}\nCampaign ID: {c.campaign_id}\nCompany: {result.get("company_name")}\nProspect ID: {result.get("prospect_id")}\nMessage ID: {result.get("message_id")}\nStatus: SENT'
-                            await send_message(chat_id,msg); await notify_channel(msg)
+                            msg=f'📧 OUTREACH SENT\nCampaign: {c.name}\nCampaign ID: {c.campaign_id}\nCompany: {result.get("company_name")}\nProspect ID: {result.get("prospect_id")}\nMessage ID: {result.get("message_id")}\nStatus: SENT'; await send_message(chat_id,msg); await notify_channel(msg)
                         else: await send_message(chat_id,f'Outreach {result.get("status")}: {result.get("reason") or result.get("error")}')
         elif command == '/neworder':
             fields=[x.strip() for x in arg.split('|')]
-            if len(fields) not in (4,5):
-                await send_message(chat_id,'Usage:\n/neworder PACKAGE|NAME|COMPANY|EMAIL|PROSPECT_ID\nPROSPECT_ID is optional.\nExample:\n/neworder STARTER|Test Customer|Test Company|you@example.com|1')
+            if len(fields) not in (4,5): await send_message(chat_id,'Usage:\n/neworder PACKAGE|NAME|COMPANY|EMAIL|PROSPECT_ID\nPROSPECT_ID is optional.\nExample:\n/neworder STARTER|Test Customer|Test Company|you@example.com|1')
             else:
-                package,name,company,email=fields[:4]; prospect_id=int(fields[4]) if len(fields)==5 and fields[4] else None
-                prices={'STARTER':settings.STARTER_PRICE,'PROFESSIONAL':settings.PROFESSIONAL_PRICE,'PREMIUM':settings.PREMIUM_PRICE}
-                package=package.upper()
+                package,name,company,email=fields[:4]; prospect_id=int(fields[4]) if len(fields)==5 and fields[4] else None; prices={'STARTER':settings.STARTER_PRICE,'PROFESSIONAL':settings.PROFESSIONAL_PRICE,'PREMIUM':settings.PREMIUM_PRICE}; package=package.upper()
                 if package not in prices: raise ValueError('Unsupported package. Use STARTER, PROFESSIONAL, or PREMIUM.')
                 if '@' not in email or '.' not in email.split('@')[-1]: raise ValueError('Please provide a valid customer email.')
-                customer=Customer(name=name,company_name=company or None,email=email,prospect_id=prospect_id); db.add(customer); db.flush()
-                order=Order(order_id='PPS-ORD-'+uuid.uuid4().hex[:12].upper(),customer_id=customer.id,prospect_id=prospect_id,package=package,amount=prices[package],currency=settings.SERVICE_CURRENCY,status='PENDING'); db.add(order); db.flush()
-                reference='PPS-'+order.order_id+'-'+uuid.uuid4().hex[:6].upper()
-                payment=Payment(payment_id='PAY-'+uuid.uuid4().hex[:10],order_id=order.id,reference=reference,amount=order.amount,currency=order.currency); db.add(payment); db.commit()
+                customer=Customer(name=name,company_name=company or None,email=email,prospect_id=prospect_id); db.add(customer); db.flush(); order=Order(order_id='PPS-ORD-'+uuid.uuid4().hex[:12].upper(),customer_id=customer.id,prospect_id=prospect_id,package=package,amount=prices[package],currency=settings.SERVICE_CURRENCY,status='PENDING'); db.add(order); db.flush(); reference='PPS-'+order.order_id+'-'+uuid.uuid4().hex[:6].upper(); payment=Payment(payment_id='PAY-'+uuid.uuid4().hex[:10],order_id=order.id,reference=reference,amount=order.amount,currency=order.currency); db.add(payment); db.commit()
                 try:
-                    result=await flw.create_payment(reference,order.amount,order.currency,email,name,order.order_id)
-                    payment.payment_url=result.get('link'); db.commit()
-                    await send_message(chat_id,f'🧾 ORDER CREATED\nOrder: {order.order_id}\nPackage: {order.package}\nCustomer: {name}\nCompany: {company}\nAmount: {order.amount:g} {order.currency}\nStatus: {order.status}\nReference: {reference}\n\n💳 Payment link:\n{payment.payment_url or "Not available"}')
-                except Exception as e:
-                    db.rollback(); await send_message(chat_id,f'Order was created but payment-link creation failed.\nOrder: {order.order_id}\nReason: {e}')
+                    result=await flw.create_payment(reference,order.amount,order.currency,email,name,order.order_id); payment.payment_url=result.get('link'); db.commit(); await send_message(chat_id,f'🧾 ORDER CREATED\nOrder: {order.order_id}\nPackage: {order.package}\nCustomer: {name}\nCompany: {company}\nAmount: {order.amount:g} {order.currency}\nStatus: {order.status}\nReference: {reference}\n\n💳 Payment link:\n{payment.payment_url or "Not available"}')
+                except Exception as e: db.rollback(); await send_message(chat_id,f'Order was created but payment-link creation failed.\nOrder: {order.order_id}\nReason: {e}')
         elif command == '/order':
             if len(parts)!=2: await send_message(chat_id,'Usage: /order ORDER_ID\nExample: /order PPS-ORD-XXXXXXXXXXXX')
             else:
-                value=parts[1]; order=db.scalar(select(Order).where(Order.order_id==value))
-                if not order and value.isdigit(): order=db.get(Order,int(value))
+                value=parts[1]; order=db.scalar(select(Order).where(Order.order_id==value)); order=order or (db.get(Order,int(value)) if value.isdigit() else None)
                 if not order: await send_message(chat_id,'Order not found. Use /orders to see existing order IDs.')
                 else:
-                    payment=db.scalar(select(Payment).where(Payment.order_id==order.id))
-                    customer=db.get(Customer,order.customer_id)
-                    await send_message(chat_id,f'📦 ORDER\nOrder: {order.order_id}\nCustomer: {customer.name if customer else "Unknown"}\nCompany: {customer.company_name if customer else "Unknown"}\nPackage: {order.package}\nAmount: {order.amount:g} {order.currency}\nStatus: {order.status}\nPayment: {payment.status if payment else "NOT CREATED"}\nPayment link: {payment.payment_url if payment and payment.payment_url else "Not available"}')
+                    payment=db.scalar(select(Payment).where(Payment.order_id==order.id)); customer=db.get(Customer,order.customer_id); await send_message(chat_id,f'📦 ORDER\nOrder: {order.order_id}\nCustomer: {customer.name if customer else "Unknown"}\nCompany: {customer.company_name if customer else "Unknown"}\nPackage: {order.package}\nAmount: {order.amount:g} {order.currency}\nStatus: {order.status}\nPayment: {payment.status if payment else "NOT CREATED"}\nPayment link: {payment.payment_url if payment and payment.payment_url else "Not available"}')
         elif command in ('/pause','/resume','/stop'):
             if len(parts)!=2: await send_message(chat_id,f'Usage: {command} PPS-XXXXXXXXXX')
             else:
@@ -132,26 +111,24 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         elif command == '/prospects':
             items=db.scalars(select(Prospect).order_by(Prospect.created_at.desc()).limit(10)).all(); await send_message(chat_id,'No prospects found.' if not items else 'Recent prospects:\n'+'\n'.join(f'{p.id}. {p.company_name} — {p.service_match or "n/a"} — score {p.qualification_score}' for p in items))
         elif command == '/orders':
-            items=db.scalars(select(Order).order_by(Order.created_at.desc()).limit(10)).all(); await send_message(chat_id,'No orders found.' if not items else 'Recent orders:\n'+'\n'.join(f'{o.order_id} | {o.package} | {o.amount:g} {o.currency} | {o.status}' for o in items))
+            # Keep Telegram testing clean: show only the three most recently created orders.
+            # Older orders remain in the database and can still be inspected with /order ORDER_ID.
+            items=db.scalars(select(Order).order_by(Order.created_at.desc()).limit(3)).all(); await send_message(chat_id,'No orders found.' if not items else 'Recent orders (latest 3):\n'+'\n'.join(f'{o.order_id} | {o.package} | {o.amount:g} {o.currency} | {o.status}' for o in items))
         elif command == '/generate':
             if len(parts)!=2: await send_message(chat_id,'Usage: /generate ORDER_ID')
             else:
-                value=parts[1]; o=db.scalar(select(Order).where(Order.order_id==value))
-                if not o and value.isdigit(): o=db.get(Order,int(value))
+                value=parts[1]; o=db.scalar(select(Order).where(Order.order_id==value)); o=o or (db.get(Order,int(value)) if value.isdigit() else None)
                 if not o: await send_message(chat_id,'Order not found. Use /orders to see existing order IDs.')
                 elif o.status not in ('PAID','IN_PRODUCTION','QC','READY'): await send_message(chat_id,f'Order {o.order_id} is {o.status}. Payment must be PAID before generation.')
                 else:
                     try:
-                        form=db.scalar(select(OnboardingForm).where(OnboardingForm.order_id==o.id))
-                        # TEST-ONLY onboarding: the synthetic Test Company order can exercise the
-                        # production presentation generator without requiring the real customer form.
-                        customer=db.get(Customer,o.customer_id) if o.customer_id else None
-                        if (not form or form.status!='COMPLETE') and customer and customer.company_name == 'Test Company':
-                            test_data={'company_name':customer.company_name,'contact_name':customer.name,'email':customer.email,'industry':'business','service':'Corporate Presentation','objective':'Create a professional test presentation to validate the generation pipeline.','audience':'Business decision makers','key_message':'Test presentation generated successfully by Pixel Pulse Studio.','style':'Premium Minimal','notes':'TEST MODE ONLY — synthetic onboarding data.'}
-                            if not form:
-                                form=OnboardingForm(order_id=o.id,data=test_data,status='COMPLETE'); db.add(form)
-                            else:
-                                form.data=test_data; form.status='COMPLETE'
+                        form=db.scalar(select(OnboardingForm).where(OnboardingForm.order_id==o.id)); customer=db.get(Customer,o.customer_id) if o.customer_id else None
+                        # TEST_MODE only: automatically provision synthetic onboarding for any test order.
+                        # Real orders always continue through the real onboarding workflow.
+                        if settings.TEST_MODE and (not form or form.status!='COMPLETE') and customer:
+                            test_data={'company_name':customer.company_name or 'Test Company','contact_name':customer.name,'email':customer.email,'industry':'business','service':'Corporate Presentation','objective':'Create a professional test presentation to validate the generation pipeline.','audience':'Business decision makers','key_message':'Test presentation generated successfully by Pixel Pulse Studio.','style':'Premium Minimal','notes':'TEST MODE ONLY — synthetic onboarding data.'}
+                            if not form: form=OnboardingForm(order_id=o.id,data=test_data,status='COMPLETE'); db.add(form)
+                            else: form.data=test_data; form.status='COMPLETE'
                             db.commit()
                         p=presentations.generate(db,o.id); await send_message(chat_id,f'Presentation ready for {o.order_id}.\nSlides: {len((p.strategy_json or {}).get("slides",[]))}\nPPTX: {settings.BASE_URL}/api/orders/{o.id}/presentation/pptx\nPDF: {settings.BASE_URL}/api/orders/{o.id}/presentation/pdf')
                     except ValueError as e: await send_message(chat_id,str(e))
