@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from app.db.init import init_db
 from app.api.routes import router
 from app.api.telegram import router as telegram_router
+from app.api.test_payment import router as test_payment_router
 from app.workers.scheduler import scheduler
 from app.bot import set_webhook
 from app.core.config import get_settings
@@ -37,6 +38,7 @@ app = FastAPI(
 
 app.include_router(router)
 app.include_router(telegram_router)
+app.include_router(test_payment_router)
 
 @app.get("/")
 def root():
