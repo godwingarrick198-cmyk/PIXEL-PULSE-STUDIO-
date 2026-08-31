@@ -111,8 +111,6 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         elif command == '/prospects':
             items=db.scalars(select(Prospect).order_by(Prospect.created_at.desc()).limit(10)).all(); await send_message(chat_id,'No prospects found.' if not items else 'Recent prospects:\n'+'\n'.join(f'{p.id}. {p.company_name} — {p.service_match or "n/a"} — score {p.qualification_score}' for p in items))
         elif command == '/orders':
-            # Keep Telegram testing clean: show only the three most recently created orders.
-            # Older orders remain in the database and can still be inspected with /order ORDER_ID.
             items=db.scalars(select(Order).order_by(Order.created_at.desc()).limit(3)).all(); await send_message(chat_id,'No orders found.' if not items else 'Recent orders (latest 3):\n'+'\n'.join(f'{o.order_id} | {o.package} | {o.amount:g} {o.currency} | {o.status}' for o in items))
         elif command == '/generate':
             if len(parts)!=2: await send_message(chat_id,'Usage: /generate ORDER_ID')
@@ -123,10 +121,11 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 else:
                     try:
                         form=db.scalar(select(OnboardingForm).where(OnboardingForm.order_id==o.id)); customer=db.get(Customer,o.customer_id) if o.customer_id else None
-                        # TEST_MODE only: automatically provision synthetic onboarding for any test order.
-                        # Real orders always continue through the real onboarding workflow.
-                        if settings.TEST_MODE and (not form or form.status!='COMPLETE') and customer:
-                            test_data={'company_name':customer.company_name or 'Test Company','contact_name':customer.name,'email':customer.email,'industry':'business','service':'Corporate Presentation','objective':'Create a professional test presentation to validate the generation pipeline.','audience':'Business decision makers','key_message':'Test presentation generated successfully by Pixel Pulse Studio.','style':'Premium Minimal','notes':'TEST MODE ONLY — synthetic onboarding data.'}
+                        # TEST onboarding is identified by the test order itself, not by TEST_MODE.
+                        # A real customer is never auto-onboarded merely because TEST_MODE is enabled.
+                        is_test_order = bool(customer and ((customer.company_name or '').strip().lower().startswith('test ') or (customer.email or '').strip().lower().endswith('@example.com')))
+                        if is_test_order and (not form or form.status!='COMPLETE'):
+                            test_data={'company_name':customer.company_name or 'Test Company','contact_name':customer.name,'email':customer.email,'industry':'business','service':'Corporate Presentation','objective':'Create a professional test presentation to validate the generation pipeline.','audience':'Business decision makers','key_message':'Test presentation generated successfully by Pixel Pulse Studio.','style':'Premium Minimal','notes':'TEST ORDER ONLY — synthetic onboarding data.'}
                             if not form: form=OnboardingForm(order_id=o.id,data=test_data,status='COMPLETE'); db.add(form)
                             else: form.data=test_data; form.status='COMPLETE'
                             db.commit()
