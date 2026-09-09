@@ -1,0 +1,9 @@
+{
+  "name": "pixel-pulse-studio-slide-engine",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Free PptxGenJS slide generation engine for Pixel Pulse Studio",
+  "dependencies": {
+    "pptxgenjs": "^4.0.1"
+  }
+}
