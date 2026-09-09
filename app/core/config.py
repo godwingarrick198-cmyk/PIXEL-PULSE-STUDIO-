@@ -52,5 +52,10 @@ class Settings:
     GMAIL_REFRESH_TOKEN: str = os.getenv("GMAIL_REFRESH_TOKEN", "")
     GMAIL_FROM_EMAIL: str = os.getenv("GMAIL_FROM_EMAIL", "")
 
+    PRESENTON_ENABLED: bool = _bool("PRESENTON_ENABLED", False)
+    PRESENTON_URL: str = os.getenv("PRESENTON_URL", "")
+    PRESENTON_API_KEY: str = os.getenv("PRESENTON_API_KEY", "")
+    PRESENTON_TIMEOUT_SECONDS: int = int(os.getenv("PRESENTON_TIMEOUT_SECONDS", "180"))
+
 _settings = Settings()
 def get_settings() -> Settings: return _settings
