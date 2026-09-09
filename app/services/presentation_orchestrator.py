@@ -1,16 +1,14 @@
 import os
 
+from sqlalchemy import select
+
+from app.models.entities import OnboardingForm
 from app.services.presentation import PresentationService
 from app.services.presenton import PresentonService
 
 
 class PresentationOrchestrator(PresentationService):
-    """Generate with the existing safe fallback, or Presenton when enabled.
-
-    The fallback is deliberately retained so Pixel Pulse never loses the
-    ability to deliver a deck just because the optional Presenton service is
-    sleeping, unavailable, or temporarily misconfigured.
-    """
+    """Generate with the existing safe fallback, or Presenton when enabled."""
 
     def __init__(self):
         super().__init__()
@@ -21,8 +19,7 @@ class PresentationOrchestrator(PresentationService):
         if not self.presenton.enabled:
             return project
 
-        onboarding = db.get(__import__('app.models.entities', fromlist=['Order']).Order, order_id)
-        form = db.scalar(__import__('sqlalchemy', fromlist=['select']).select(__import__('app.models.entities', fromlist=['OnboardingForm']).OnboardingForm).where(__import__('app.models.entities', fromlist=['OnboardingForm']).OnboardingForm.order_id == order_id))
+        form = db.scalar(select(OnboardingForm).where(OnboardingForm.order_id == order_id))
         data = form.data if form else {}
         source_text = self._source_text(db, order_id)
         slides = len(project.strategy_json.get('slides', [])) or 8
@@ -50,7 +47,6 @@ class PresentationOrchestrator(PresentationService):
         result = self.presenton.generate(content, instructions, slides)
         self.presenton.download(result['pptx_url'], os.path.join(base, 'presentation.pptx'))
         self.presenton.download(result['pdf_url'], os.path.join(base, 'presentation.pdf'))
-
         project.pptx_path = os.path.join(base, 'presentation.pptx')
         project.pdf_path = os.path.join(base, 'presentation.pdf')
         db.commit()
