@@ -8,12 +8,12 @@ from app.schemas.api import CampaignCreate, OrderCreate, OnboardingUpdate
 from app.models.entities import *
 from app.services.campaigns import CampaignService
 from app.services.flutterwave import FlutterwaveService
-from app.services.presentation import PresentationService
+from app.services.presentation_orchestrator import PresentationOrchestrator
 from app.core.config import get_settings
 from app.core.logging import events
 
 router=APIRouter(prefix='/api')
-s=get_settings(); campaigns=CampaignService(); flw=FlutterwaveService(); presentations=PresentationService()
+s=get_settings(); campaigns=CampaignService(); flw=FlutterwaveService(); presentations=PresentationOrchestrator()
 
 def safe_campaign(c):
     return {'campaign_id':c.campaign_id,'name':c.name,'status':c.status,'target_prospects':c.target_prospects,'completed_prospects':c.completed_prospects,'remaining_prospects':c.remaining_prospects,'daily_limit':c.daily_limit,'priority':c.priority,'industries':c.industries,'countries':c.countries,'services':c.services,'start_time':c.start_time,'end_time':c.end_time}
@@ -105,6 +105,7 @@ def generate_presentation(id:int,db:Session=Depends(get_db)):
     if o.status not in ('PAID','IN_PRODUCTION','QC','READY'): raise HTTPException(400,'Order must be PAID before generation')
     try: project=presentations.generate(db,id)
     except ValueError as e: raise HTTPException(400,str(e))
+    except RuntimeError as e: raise HTTPException(502,str(e))
     return {'project_id':project.id,'status':project.status,'pptx_path':project.pptx_path,'pdf_path':project.pdf_path,'slides':len(project.strategy_json.get('slides',[]))}
 @router.get('/orders/{id}/presentation/{kind}')
 def presentation_file(id:int,kind:str,db:Session=Depends(get_db)):
