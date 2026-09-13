@@ -1,63 +1,8 @@
-const fs = require('fs');
-const PptxGenJS = require('pptxgenjs');
-
-const [, , specPath, outputPath, imagePath] = process.argv;
-if (!specPath || !outputPath) process.exit(2);
-const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
-const slides = Array.isArray(spec.slides) ? spec.slides : [];
-const company = spec.company || 'Company';
-const style = String(spec.style || '').toLowerCase();
-const image = imagePath && fs.existsSync(imagePath) ? imagePath : null;
-const themes = {
-  'premium minimal': { bg:'F7F7F5', ink:'171717', muted:'666666', accent:'111827', soft:'E5E7EB' },
-  'bold modern': { bg:'0B1020', ink:'F8FAFC', muted:'CBD5E1', accent:'7C3AED', soft:'1E293B' },
-  'tech': { bg:'08111F', ink:'F8FAFC', muted:'B8C7D9', accent:'06B6D4', soft:'123047' },
-  'creative': { bg:'FFF8F1', ink:'201A17', muted:'6B625C', accent:'F97316', soft:'FFE4D1' },
-  'corporate': { bg:'F4F7FB', ink:'102033', muted:'5D6B7A', accent:'2563EB', soft:'DCE8FA' },
-  'vibrant': { bg:'FFFDF7', ink:'1F2937', muted:'5B6470', accent:'E11D48', soft:'FFE4EA' }
-};
-const theme = Object.entries(themes).find(([k]) => style.includes(k))?.[1] || themes['premium minimal'];
-const pptx = new PptxGenJS();
-pptx.layout='LAYOUT_WIDE'; pptx.author='Pixel Pulse Studio'; pptx.company='Pixel Pulse Studio';
-pptx.subject=`${company} presentation`; pptx.title=`${company} presentation`; pptx.lang='en-US';
-pptx.theme={headFontFace:'Aptos Display',bodyFontFace:'Aptos',lang:'en-US'};
-pptx.defineSlideMaster({title:'BASE',background:{color:theme.bg},objects:[
-  {rect:{x:0,y:0,w:13.333,h:0.07,fill:{color:theme.accent},line:{color:theme.accent}}},
-  {text:{text:company,options:{x:0.62,y:7.12,w:4,h:0.18,fontFace:'Aptos',fontSize:7,color:theme.muted,margin:0}}},
-  {text:{text:'PIXEL PULSE STUDIO',options:{x:9.9,y:7.12,w:2.7,h:0.18,fontFace:'Aptos',fontSize:7,color:theme.muted,align:'right',margin:0}}}
-]});
-function t(s,text,x,y,w,h,o={}){s.addText(String(text??''),{x,y,w,h,margin:0,fit:'shrink',fontFace:'Aptos',...o});}
-function round(s,x,y,w,h,fill,line=fill){s.addShape(PptxGenJS.ShapeType.roundRect,{x,y,w,h,fill:{color:fill},line:{color:line,transparency:100}});}
-function accent(s,x,y,w,h=0.07){s.addShape(PptxGenJS.ShapeType.rect,{x,y,w,h,fill:{color:theme.accent},line:{color:theme.accent}});}
-function img(s,x,y,w,h){if(image)s.addImage({path:image,x,y,w,h});}
-function bullets(item){return (Array.isArray(item.bullets)?item.bullets:[]).map(x=>String(x).trim()).filter(Boolean).slice(0,5);}
-function title(s,txt,sub){t(s,txt,0.68,0.46,11.6,0.62,{fontFace:'Aptos Display',fontSize:27,bold:true,color:theme.ink});if(sub)t(s,sub,0.7,1.08,10.8,0.28,{fontSize:9.5,color:theme.muted});}
-function metric(s,v,l,x){round(s,x,1.72,2.72,1.25,theme.soft);t(s,v,x+0.18,1.9,2.36,0.42,{fontFace:'Aptos Display',fontSize:25,bold:true,color:theme.accent});t(s,l,x+0.18,2.4,2.36,0.34,{fontSize:9.5,color:theme.muted});}
-function list(s,bs,x,y,w,h,size=17){const values=bs.length?bs:['Key point from the supplied brief.'];s.addText(values.map((b,i)=>({text:b,options:{bullet:{indent:16},breakLine:i<values.length-1}})),{x,y,w,h,margin:0.02,fontFace:'Aptos',fontSize:size,color:theme.ink,fit:'shrink',paraSpaceAfterPt:12});}
-slides.forEach((item,i)=>{
-  const n=i+1,total=slides.length,txt=String(item.title||`Slide ${n}`),bs=bullets(item),layout=String(item.layout||'CONTENT').toUpperCase();
-  const s=pptx.addSlide('BASE'); t(s,`${String(n).padStart(2,'0')} / ${String(total).padStart(2,'0')}`,11.55,7.07,0.72,0.18,{fontSize:7,color:theme.muted,align:'right'});
-  if(n===1||layout==='TITLE'||layout==='COVER'){
-    s.background={color:theme.accent}; s.addShape(PptxGenJS.ShapeType.rect,{x:0,y:0,w:13.333,h:7.5,fill:{color:theme.accent},line:{color:theme.accent}});
-    if(image){img(s,8.25,0,5.083,7.5);s.addShape(PptxGenJS.ShapeType.rect,{x:7.72,y:0,w:1,h:7.5,fill:{color:theme.accent,transparency:8},line:{color:theme.accent,transparency:100}});}
-    t(s,company,0.78,0.92,6.8,0.65,{fontFace:'Aptos Display',fontSize:31,bold:true,color:'FFFFFF'}); t(s,txt,0.82,1.95,6.45,1.25,{fontFace:'Aptos Display',fontSize:25,bold:true,color:'FFFFFF'}); t(s,bs[0]||'A clear, client-ready presentation built by Pixel Pulse Studio.',0.84,5.62,6.15,0.72,{fontSize:14,color:'F1F5F9'}); t(s,'PIXEL PULSE STUDIO  /  PRESENTATION',0.84,6.78,5.2,0.22,{fontSize:7.5,bold:true,color:'E2E8F0'}); return;
-  }
-  title(s,txt,`${company}  •  ${n}/${total}`);
-  if(layout==='STATS'||/market|traction|result|metric|growth|opportunity/i.test(txt)){
-    bs.slice(0,4).forEach((b,j)=>{const p=b.split(':');metric(s,p.length>1?p[0]:String(j+1),p.length>1?p.slice(1).join(':').trim():b,0.72+j*3.08);}); list(s,bs,0.75,3.55,11.6,2.5,14);
-  }else if(layout==='TWO_COLUMN'||/solution|offering|benefit|competition|business model|approach/i.test(txt)){
-    round(s,0.7,1.62,5.72,4.8,theme.soft); round(s,6.82,1.62,5.8,4.8,theme.bg,theme.soft); const m=Math.ceil(bs.length/2);
-    t(s,'WHAT MATTERS',1,1.98,4.6,0.3,{fontSize:9,bold:true,color:theme.accent}); list(s,bs.slice(0,m),1,2.45,4.75,3.55,15);
-    t(s,'HOW WE MOVE FORWARD',7.12,1.98,4.7,0.3,{fontSize:9,bold:true,color:theme.accent}); list(s,bs.slice(m),7.12,2.45,4.78,3.55,15);
-  }else if(layout==='QUOTE'||/vision|mission|key message/i.test(txt)){
-    t(s,'“',0.82,1.62,0.7,0.8,{fontFace:'Georgia',fontSize:44,bold:true,color:theme.accent}); t(s,bs[0]||'A focused message for the audience.',1.48,2.08,10.55,1.65,{fontFace:'Aptos Display',fontSize:25,bold:true,color:theme.ink,italic:true,align:'center',valign:'mid'}); accent(s,5.9,4.25,1.5,0.08); list(s,bs.slice(1),2,4.72,9.3,1.35,13);
-  }else if(layout==='CTA'||/next step|contact|call to action|closing/i.test(txt)){
-    s.addShape(PptxGenJS.ShapeType.rect,{x:0.7,y:1.62,w:11.95,h:4.82,fill:{color:theme.accent},line:{color:theme.accent}}); t(s,bs[0]||'Let’s build the next step together.',1.15,2.28,10.9,1.25,{fontFace:'Aptos Display',fontSize:27,bold:true,color:'FFFFFF',align:'center'}); list(s,bs.slice(1),2,4.02,9.3,1.25,13); t(s,spec.email||'Ready to continue',1.2,5.75,10.8,0.32,{fontSize:10,color:'E2E8F0',align:'center'});
-  }else{
-    const visual=image&&(n%3===0||layout==='IMAGE'||layout==='VISUAL');
-    if(visual){round(s,0.72,1.62,7.1,4.88,theme.bg,theme.soft);list(s,bs,1,2.02,6.55,4,16);round(s,8.05,1.62,4.58,4.88,theme.soft);img(s,8.18,1.75,4.32,4.62);}
-    else{accent(s,0.72,1.72,1.15);list(s,bs,0.76,2.05,11.35,4,18);}
-  }
-});
-if(!slides.length){const s=pptx.addSlide('BASE');t(s,company,0.8,1.4,11.5,0.7,{fontSize:30,bold:true,color:theme.ink});t(s,'No slide strategy was returned.',0.82,2.4,10,0.5,{fontSize:18,color:theme.muted});}
-pptx.writeFile({fileName:outputPath}).catch(e=>{console.error(e);process.exit(1);});
+const fs=require('fs');const PptxGenJS=require('pptxgenjs');
+const[, ,specPath,outPath,imagePath]=process.argv;if(!specPath||!outPath)process.exit(2);const spec=JSON.parse(fs.readFileSync(specPath,'utf8'));const slides=Array.isArray(spec.slides)?spec.slides:[];const company=spec.company||'Company';const style=String(spec.style||'').toLowerCase();const image=imagePath&&fs.existsSync(imagePath)?imagePath:null;
+const themes={"premium minimal":['F7F7F5','171717','666666','111827','E5E7EB'],"bold modern":['0B1020','F8FAFC','CBD5E1','7C3AED','1E293B'],tech:['08111F','F8FAFC','B8C7D9','06B6D4','123047'],creative:['FFF8F1','201A17','6B625C','F97316','FFE4D1'],corporate:['F4F7FB','102033','5D6B7A','2563EB','DCE8FA'],vibrant:['FFFDF7','1F2937','5B6470','E11D48','FFE4EA']};const key=Object.keys(themes).find(k=>style.includes(k))||'premium minimal';const[bg,ink,muted,accent,soft]=themes[key];const pptx=new PptxGenJS();pptx.layout='LAYOUT_WIDE';pptx.author='Pixel Pulse Studio';pptx.company='Pixel Pulse Studio';pptx.title=company+' presentation';pptx.subject='Client presentation';pptx.lang='en-US';pptx.theme={headFontFace:'Aptos Display',bodyFontFace:'Aptos',lang:'en-US'};
+pptx.defineSlideMaster({title:'BASE',background:{color:bg},objects:[{rect:{x:0,y:0,w:13.333,h:.07,fill:{color:accent},line:{color:accent}}},{text:{text:company,options:{x:.62,y:7.12,w:4,h:.18,fontSize:7,color:muted,margin:0}}},{text:{text:'PIXEL PULSE STUDIO',options:{x:9.9,y:7.12,w:2.7,h:.18,fontSize:7,color:muted,align:'right',margin:0}}}]});
+function text(s,v,x,y,w,h,o={}){s.addText(String(v??''),{x,y,w,h,margin:0,fit:'shrink',fontFace:'Aptos',...o})}function box(s,x,y,w,h,fill=soft,line=fill){s.addShape(PptxGenJS.ShapeType.roundRect,{x,y,w,h,rectRadius:.08,fill:{color:fill},line:{color:line,transparency:100}})}function bar(s,x,y,w,h,fill=accent){s.addShape(PptxGenJS.ShapeType.rect,{x,y,w,h,fill:{color:fill},line:{color:fill}})}function addImage(s,x,y,w,h){if(image)s.addImage({path:image,x,y,w,h,sizingContain:false})}function bullets(a){return(Array.isArray(a)?a:[]).map(v=>String(v).trim()).filter(Boolean).slice(0,5)}function list(s,a,x,y,w,h,size=16){const b=bullets(a);s.addText((b.length?b:['Key point from the supplied brief.']).map((v,i)=>({text:v,options:{bullet:{indent:16},breakLine:i<b.length-1}})),{x,y,w,h,margin:.02,fontSize:size,color:ink,fit:'shrink',paraSpaceAfterPt:12})}function heading(s,v,sub){text(s,v,.68,.46,11.7,.62,{fontFace:'Aptos Display',fontSize:27,bold:true,color:ink});if(sub)text(s,sub,.7,1.1,11,.25,{fontSize:9.5,color:muted})}function metric(s,v,l,x){box(s,x,1.72,2.72,1.3,soft);text(s,v,x+.18,1.9,2.36,.4,{fontFace:'Aptos Display',fontSize:25,bold:true,color:accent});text(s,l,x+.18,2.4,2.36,.34,{fontSize:9.5,color:muted})}
+slides.forEach((item,i)=>{const n=i+1,total=slides.length,layout=String(item.layout||'CONTENT').toUpperCase(),title=String(item.title||`Slide ${n}`),bs=bullets(item.bullets);const s=pptx.addSlide('BASE');text(s,`${String(n).padStart(2,'0')} / ${String(total).padStart(2,'0')}`,11.55,7.07,.72,.18,{fontSize:7,color:muted,align:'right'});
+if(n===1||layout==='TITLE'||layout==='COVER'){s.background={color:accent};s.addShape(PptxGenJS.ShapeType.rect,{x:0,y:0,w:13.333,h:7.5,fill:{color:accent},line:{color:accent}});if(image){addImage(s,8.05,0,5.28,7.5);s.addShape(PptxGenJS.ShapeType.rect,{x:7.55,y:0,w:.9,h:7.5,fill:{color:accent,transparency:12},line:{color:accent,transparency:100}})}text(s,company,.8,.9,6.5,.6,{fontFace:'Aptos Display',fontSize:31,bold:true,color:'FFFFFF'});text(s,title,.84,1.92,6.35,1.35,{fontFace:'Aptos Display',fontSize:25,bold:true,color:'FFFFFF'});text(s,bs[0]||'A clear, client-ready presentation built by Pixel Pulse Studio.',.86,5.55,6.1,.75,{fontSize:14,color:'F1F5F9'});text(s,'PIXEL PULSE STUDIO  /  PRESENTATION',.86,6.78,5.2,.22,{fontSize:7.5,bold:true,color:'E2E8F0'});return}
+heading(s,title,`${company}  •  ${n}/${total}`);if(layout==='STATS'||/market|traction|result|metric|growth|opportunity/i.test(title)){bs.slice(0,4).forEach((b,j)=>{const p=b.split(':');metric(s,p.length>1?p[0]:String(j+1),p.length>1?p.slice(1).join(':').trim():b,.72+j*3.08)});list(s,bs,.75,3.55,11.6,2.45,14)}else if(layout==='TWO_COLUMN'||/solution|offering|benefit|competition|business model|approach/i.test(title)){box(s,.7,1.62,5.72,4.8,soft);box(s,6.82,1.62,5.8,4.8,bg,soft);text(s,'WHAT MATTERS',1,1.98,4.6,.3,{fontSize:9,bold:true,color:accent});list(s,bs.slice(0,Math.ceil(bs.length/2)),1,2.45,4.75,3.55,15);text(s,'HOW WE MOVE FORWARD',7.12,1.98,4.7,.3,{fontSize:9,bold:true,color:accent});list(s,bs.slice(Math.ceil(bs.length/2)),7.12,2.45,4.78,3.55,15)}else if(layout==='QUOTE'||/vision|mission|key message/i.test(title)){text(s,'“',.82,1.62,.7,.8,{fontFace:'Georgia',fontSize:44,bold:true,color:accent});text(s,bs[0]||'A focused message for the audience.',1.48,2.08,10.55,1.65,{fontFace:'Aptos Display',fontSize:25,bold:true,color:ink,italic:true,align:'center',valign:'mid'});bar(s,5.9,4.25,1.5,.08);list(s,bs.slice(1),2,4.72,9.3,1.35,13)}else if(layout==='CTA'||/next step|contact|call to action|closing/i.test(title)){s.addShape(PptxGenJS.ShapeType.rect,{x:.7,y:1.62,w:11.95,h:4.82,fill:{color:accent},line:{color:accent}});text(s,bs[0]||'Let’s build the next step together.',1.15,2.28,10.9,1.25,{fontFace:'Aptos Display',fontSize:27,bold:true,color:'FFFFFF',align:'center'});list(s,bs.slice(1),2,4.02,9.3,1.25,13);text(s,spec.email||'Ready to continue',1.2,5.75,10.8,.32,{fontSize:10,color:'E2E8F0',align:'center'})}else{const visual=image&&(n%3===0||layout==='IMAGE'||layout==='VISUAL');if(visual){box(s,.72,1.62,7.1,4.88,bg,soft);list(s,bs,1,2.02,6.55,4,16);box(s,8.05,1.62,4.58,4.88,soft);addImage(s,8.18,1.75,4.32,4.62)}else{bar(s,.72,1.72,1.15);list(s,bs,.76,2.05,11.35,4,18)}}});if(!slides.length){const s=pptx.addSlide('BASE');text(s,company,.8,1.4,11.5,.7,{fontSize:30,bold:true,color:ink});text(s,'No slide strategy was returned.',.82,2.4,10,.5,{fontSize:18,color:muted})}pptx.writeFile({fileName:outPath}).catch(e=>{console.error(e);process.exit(1)});
