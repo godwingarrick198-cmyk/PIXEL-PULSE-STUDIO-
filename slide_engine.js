@@ -31,9 +31,9 @@ function round(s,x,y,w,h,fill,line=fill){s.addShape(PptxGenJS.ShapeType.roundRec
 function accent(s,x,y,w,h=0.07){s.addShape(PptxGenJS.ShapeType.rect,{x,y,w,h,fill:{color:theme.accent},line:{color:theme.accent}});}
 function img(s,x,y,w,h){if(image)s.addImage({path:image,x,y,w,h});}
 function bullets(item){return (Array.isArray(item.bullets)?item.bullets:[]).map(x=>String(x).trim()).filter(Boolean).slice(0,5);}
-function list(s,bs,x,y,w,h,size=17){const values=bs.length?bs:['Key point from the supplied brief.'];s.addText(values.map((b,i)=>({text:b,options:{bullet:{indent:16},breakLine:i<values.length-1}})),{x,y,w,h,margin:0.02,fontFace:'Aptos',fontSize:size,color:theme.ink,fit:'shrink',paraSpaceAfterPt:12});}
 function title(s,txt,sub){t(s,txt,0.68,0.46,11.6,0.62,{fontFace:'Aptos Display',fontSize:27,bold:true,color:theme.ink});if(sub)t(s,sub,0.7,1.08,10.8,0.28,{fontSize:9.5,color:theme.muted});}
 function metric(s,v,l,x){round(s,x,1.72,2.72,1.25,theme.soft);t(s,v,x+0.18,1.9,2.36,0.42,{fontFace:'Aptos Display',fontSize:25,bold:true,color:theme.accent});t(s,l,x+0.18,2.4,2.36,0.34,{fontSize:9.5,color:theme.muted});}
+function list(s,bs,x,y,w,h,size=17){const values=bs.length?bs:['Key point from the supplied brief.'];s.addText(values.map((b,i)=>({text:b,options:{bullet:{indent:16},breakLine:i<values.length-1}})),{x,y,w,h,margin:0.02,fontFace:'Aptos',fontSize:size,color:theme.ink,fit:'shrink',paraSpaceAfterPt:12});}
 slides.forEach((item,i)=>{
   const n=i+1,total=slides.length,txt=String(item.title||`Slide ${n}`),bs=bullets(item),layout=String(item.layout||'CONTENT').toUpperCase();
   const s=pptx.addSlide('BASE'); t(s,`${String(n).padStart(2,'0')} / ${String(total).padStart(2,'0')}`,11.55,7.07,0.72,0.18,{fontSize:7,color:theme.muted,align:'right'});
