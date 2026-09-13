@@ -64,26 +64,27 @@ class AIService:
         key_message=data.get('key_message') or data.get('message') or 'Clear, professional communication of the company offering.'
         description=data.get('description') or data.get('about')
         source=source_text.strip() if source_text else ''
+        evidence='Verified source material was supplied with this order.' if source else 'No supporting source material was supplied; proof points are intentionally not invented.'
         slides=[
             {'layout':'TITLE','title':company,'bullets':[service, f'Prepared for {audience}']},
             {'layout':'OVERVIEW','title':'Purpose','bullets':[objective, f'Audience: {audience}']},
-            {'layout':'CONTENT','title':'Company at a glance','bullets':[f'{company} operates in the {industry} space.'] + ([description] if description else [])},
-            {'layout':'CONTENT','title':'Core message','bullets':[key_message]},
-            {'layout':'CONTENT','title':'Offering','bullets':[f'Recommended presentation: {service}.', 'The final deck should clearly explain the offering, value, and next action using verified customer information.']},
-            {'layout':'CONTENT','title':'Audience value','bullets':[f'The presentation is designed for {audience}.', 'Lead with the audience problem, then connect the offering to the requested outcome.']},
-            {'layout':'CONTENT','title':'Evidence and proof','bullets':(['Verified source material was supplied with this order.'] if source else ['No supporting source material was supplied; proof points are intentionally not invented.'])},
-            {'layout':'CONTENT','title':'Market context','bullets':['Market size, customer counts, growth rates, and competitor claims should be added only when verified source material is supplied.']},
-            {'layout':'CONTENT','title':'Business case','bullets':['Use verified pricing, process, outcomes, and differentiators from the customer onboarding or uploaded source material.','Unverified claims are intentionally excluded.']},
-            {'layout':'CONTENT','title':'Recommended next step','bullets':['Align the final call to action with the customer objective.', objective]},
-            {'layout':'CONTENT','title':'Key takeaways','bullets':[f'{company}: {key_message}',f'Focus: {objective}','Use verified evidence to strengthen the final version.']},
-            {'layout':'CONTACT','title':'Contact','bullets':([contact] if contact else []) + ([email] if email else []) + ['Pixel Pulse Studio']}
+            {'layout':'TWO_COLUMN','title':'Company at a glance','bullets':[f'{company} operates in the {industry} space.'] + ([description] if description else []) + [f'Focus: {service}.']},
+            {'layout':'QUOTE','title':'Core message','bullets':[key_message]},
+            {'layout':'IMAGE','title':'The offering','bullets':[f'Recommended presentation: {service}.','Explain the offering with concise, verified customer information.']},
+            {'layout':'TWO_COLUMN','title':'Audience value','bullets':[f'The presentation is designed for {audience}.','Lead with the audience problem, then connect the offering to the requested outcome.']},
+            {'layout':'EVIDENCE','title':'Evidence and proof','bullets':[evidence,'Add verified case studies, testimonials, figures, or source-backed proof when available.']},
+            {'layout':'STATS','title':'Market context','bullets':['Verified market size','Verified growth rate','Verified customer count','Verified competitive signal']},
+            {'layout':'TIMELINE','title':'Recommended approach','bullets':['Clarify the audience need','Present the relevant offering','Support the message with verified evidence','Close with the requested action']},
+            {'layout':'CTA','title':'Recommended next step','bullets':[objective,'Align the final call to action with the customer objective.']},
+            {'layout':'OVERVIEW','title':'Key takeaways','bullets':[f'{company}: {key_message}',f'Focus: {objective}','Use verified evidence to strengthen the final version.']},
+            {'layout':'CTA','title':'Contact','bullets':([contact] if contact else []) + ([email] if email else []) + ['Pixel Pulse Studio']}
         ]
         return {'style':data.get('style','Premium Minimal'),'slides':slides}
 
     def presentation_strategy(self,onboarding,source_text):
         if not self.client:
             return self._fallback_presentation(onboarding,source_text)
-        prompt=f'''Create a truthful presentation strategy for Pixel Pulse Studio. Never fabricate facts. Use only supplied onboarding and source material. Do not invent market numbers, customers, competitors, traction, team members, pricing, or contact details. If information is missing, omit the claim and use a useful instruction such as "Add verified proof point from customer source material" rather than a generic placeholder. Onboarding: {json.dumps(onboarding)} Source materials: {source_text[:12000]} Return JSON with style and slides, each slide having layout,title,bullets.'''
+        prompt=f'''Create a truthful, visually varied presentation strategy for Pixel Pulse Studio. Never fabricate facts. Use only supplied onboarding and source material. Do not invent market numbers, customers, competitors, traction, team members, pricing, or contact details. If information is missing, omit the claim and use a useful instruction such as "Add verified proof point from customer source material" rather than a generic placeholder. Prefer varied layouts such as TITLE, OVERVIEW, TWO_COLUMN, IMAGE, STATS, QUOTE, TIMELINE, EVIDENCE, and CTA. Avoid repeating CONTENT for every slide. Onboarding: {json.dumps(onboarding)} Source materials: {source_text[:12000]} Return JSON with style and slides, each slide having layout,title,bullets.'''
         try:
             result=json.loads(self.client.models.generate_content(model='gemini-2.5-flash',contents=prompt,config={'response_mime_type':'application/json'}).text)
             if not result.get('slides'): return self._fallback_presentation(onboarding,source_text)
