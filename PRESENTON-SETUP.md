@@ -1,72 +1,97 @@
 # Presenton setup for Pixel Pulse Studio
 
-Pixel Pulse now has an optional Presenton adapter. It is **disabled by default** so the existing local PPTX/PDF renderer keeps working during testing.
+Pixel Pulse Studio is now wired to use **Presenton as the presentation renderer** when Presenton is enabled. The existing local renderer remains in the repository as a safety fallback until the Presenton test is proven successful.
 
-Presenton is open-source (Apache-2.0), self-hostable, supports editable PPTX/PDF output, and exposes a presentation-generation API. See the official project: https://github.com/presenton/presenton
+Presenton is open-source, self-hostable, exposes a presentation-generation API, and can export editable PPTX and PDF files. Official API endpoint: `/api/v1/ppt/presentation/generate`.
 
 ## Important $0 rule
 
-Do not paste a paid API key into this project. For a zero-spend setup, Presenton itself must run on free/self-hosted infrastructure and its model provider must also be free/local (for example Ollama) or a currently available free-tier provider.
+Do not paste a paid API key into Pixel Pulse.
 
-A Render free web service is an **experimental** option, not a guarantee: Presenton + an AI model can be too heavy for a small free instance and Render free instances sleep. If it cannot stay healthy, run Presenton on a machine you control and expose it through a secure tunnel, or keep the Pixel Pulse fallback renderer enabled.
+For the first test, use:
 
-## 1. Create the Presenton service
+- Presenton self-hosted on Render Free
+- Google's Gemini API through the existing free quota/key, if available
+- No OpenAI/Anthropic/paid Presenton subscription
 
-Use the official Presenton Docker image:
+Render Free currently gives a web service 512 MB RAM and 0.1 CPU. Render explicitly describes Free services as testing/hobby infrastructure, and they sleep after inactivity. Presenton may be too heavy for that limit, so this deployment is an experiment. If it OOMs or cannot stay healthy, we will move Presenton to a larger/free alternative rather than breaking Pixel Pulse. citeturn1search1turn1search2
 
-`ghcr.io/presenton/presenton:latest`
+## 1. Create the Presenton Render service
 
-Presenton's documented container port is 80. The simplest local test is:
+The repository contains `presenton-render.yaml` with the test configuration.
 
-`docker run -it --name presenton -p 5001:80 -v "./app_data:/app_data" ghcr.io/presenton/presenton:latest`
+In Render:
 
-Then open `http://localhost:5001`.
+1. Open **New → Blueprint**.
+2. Select the Pixel Pulse GitHub repository.
+3. Choose the `presenton-render.yaml` blueprint.
+4. Keep the Presenton service on **Free** for this test.
+5. Render will ask for two secret values:
+   - `GOOGLE_API_KEY` — paste your existing Gemini/Google AI API key.
+   - `AUTH_PASSWORD` — create a strong password of at least 8 characters.
+6. Deploy.
 
-## 2. Configure a model provider
+Presenton officially supports the `google` provider and `GOOGLE_API_KEY`. Its Docker image listens on port 80. citeturn2search0
 
-For strict $0 operation, prefer a local model through Ollama. Presenton documents Ollama support with `LLM=ollama`, `OLLAMA_URL`, and `OLLAMA_MODEL`.
+## 2. Wait for Presenton to become Live
 
-If you use a free-tier cloud model instead, verify its current quota/terms first. Pixel Pulse does not require that option and should not silently incur charges.
+Render should give the service an address similar to:
 
-## 3. Create a Presenton API key
+`https://pixel-pulse-presenton.onrender.com`
 
-In Presenton, open **Admin → API keys** and create an access key. Presenton's API expects the key as:
+Open that address in a browser. If the service is healthy, the Presenton interface should load.
 
-`Authorization: Bearer sk-presenton-...`
+If Render reports an out-of-memory, crash-loop, or failed health check, **stop there** and send me the Render error. Do not change Pixel Pulse yet.
 
-Do not commit this key to GitHub.
+## 3. Create the Presenton API key
 
-## 4. Add these Render environment variables to Pixel Pulse
+Log in to the new Presenton instance with the admin account created during deployment.
+
+Open the Presenton account/admin area and create an API key. The key has the form:
+
+`sk-presenton-...`
+
+Presenton's API requires this key in the `Authorization: Bearer ...` header. citeturn1search5turn1search8
+
+**Never put this key in GitHub.** It goes only into Render environment variables.
+
+## 4. Connect Pixel Pulse to Presenton
+
+Open the existing **Pixel Pulse Studio** Render service → Environment.
+
+Add/update these variables:
 
 `PRESENTON_ENABLED=true`
 
-`PRESENTON_URL=https://YOUR-PRESENTON-SERVICE-URL`
+`PRESENTON_URL=https://YOUR-PRESENTON-SERVICE.onrender.com`
 
 `PRESENTON_API_KEY=sk-presenton-...`
 
-Optional:
-
 `PRESENTON_TIMEOUT_SECONDS=180`
 
-Keep the existing Pixel Pulse variables unchanged.
+Keep every existing Pixel Pulse environment variable unchanged.
 
-## 5. Test
+## 5. Test the real Pixel Pulse generation flow
 
-1. Deploy Pixel Pulse from the latest `main` commit.
-2. Confirm `/api/health` returns `{"status":"ok"}`.
-3. Keep `FULL_AUTO=false` and `SCHEDULER_ENABLED=false` while testing.
-4. Create/use a paid test order in Telegram.
-5. Complete onboarding.
-6. Run `/generate PPS-ORD-...`.
-7. Download both PPTX and PDF.
+After Pixel Pulse redeploys:
 
-When Presenton is enabled and reachable, Pixel Pulse downloads the Presenton-generated files into the normal order storage. If Presenton is down or fails, Pixel Pulse automatically keeps the existing local renderer's output instead of failing the order.
+1. Confirm `/api/health` returns `{"status":"ok"}`.
+2. Use the existing paid test order.
+3. Run `/generate PPS-ORD-...` in Telegram.
+4. Download the resulting PPTX and PDF.
+5. Check the slides visually.
 
-## What was committed
+Pixel Pulse will send the approved onboarding/source content to Presenton, then download Presenton's PPTX/PDF into the normal Pixel Pulse order storage.
 
-- `app/services/presenton.py` — Presenton API client + file download.
-- `app/services/presentation_orchestrator.py` — optional Presenton routing with a safe local fallback.
+## What is already in the repository
+
+- `app/services/presenton.py` — Presenton API client.
+- `app/services/presentation_orchestrator.py` — routes generation through Presenton when configured.
 - `app/core/config.py` — Presenton environment settings.
-- `app/api/routes.py` — `/generate` now uses the orchestrator.
+- `app/api/routes.py` — generation endpoint uses the orchestrator.
+- `presenton-render.yaml` — Render Free experimental deployment definition.
+- `slide_engine.js` — retained as a fallback until Presenton is proven stable.
 
-No API key or paid credential was committed.
+The Presenton adapter was also corrected so it handles both absolute download URLs and relative paths returned by different Presenton deployments.
+
+No API key or paid credential is committed.
