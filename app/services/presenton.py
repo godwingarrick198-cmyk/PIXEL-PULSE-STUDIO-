@@ -1,25 +1,22 @@
-import os
-from pathlib import Path
-
 import httpx
+from pathlib import Path
 
 from app.core.config import get_settings
 
 
 class PresentonService:
-    """Optional Presenton adapter.
-
-    Presenton stays external to Pixel Pulse. Pixel Pulse sends the approved
-    onboarding/content to a self-hosted Presenton instance, then downloads the
-    generated PPTX/PDF into its normal order storage.
-    """
+    """Presenton API adapter used by Pixel Pulse for presentation rendering."""
 
     def __init__(self):
         self.s = get_settings()
 
     @property
     def enabled(self):
-        return bool(self.s.PRESENTON_ENABLED and self.s.PRESENTON_URL and self.s.PRESENTON_API_KEY)
+        return bool(
+            self.s.PRESENTON_ENABLED
+            and self.s.PRESENTON_URL
+            and self.s.PRESENTON_API_KEY
+        )
 
     def _headers(self):
         return {
@@ -27,9 +24,17 @@ class PresentonService:
             "Content-Type": "application/json",
         }
 
+    def _absolute_url(self, value):
+        if not value:
+            return ""
+        if str(value).startswith(("http://", "https://")):
+            return str(value)
+        return self.s.PRESENTON_URL.rstrip("/") + "/" + str(value).lstrip("/")
+
     def generate(self, content, instructions, slides, template="general"):
         if not self.enabled:
             raise RuntimeError("Presenton is not configured")
+
         url = self.s.PRESENTON_URL.rstrip("/") + "/api/v1/ppt/presentation/generate"
         payload = {
             "content": content,
@@ -43,7 +48,11 @@ class PresentonService:
             "include_table_of_contents": False,
             "export_as": "pptx",
         }
-        with httpx.Client(timeout=self.s.PRESENTON_TIMEOUT_SECONDS, follow_redirects=True) as client:
+
+        with httpx.Client(
+            timeout=self.s.PRESENTON_TIMEOUT_SECONDS,
+            follow_redirects=True,
+        ) as client:
             response = client.post(url, headers=self._headers(), json=payload)
             response.raise_for_status()
             ppt = response.json()
@@ -54,15 +63,20 @@ class PresentonService:
             response.raise_for_status()
             pdf = response.json()
 
-            return {
-                "pptx_url": self.s.PRESENTON_URL.rstrip("/") + ppt["path"],
-                "pdf_url": self.s.PRESENTON_URL.rstrip("/") + pdf["path"],
-                "edit_url": self.s.PRESENTON_URL.rstrip("/") + (ppt.get("edit_path") or ""),
-            }
+        return {
+            "pptx_url": self._absolute_url(ppt.get("path")),
+            "pdf_url": self._absolute_url(pdf.get("path")),
+            "edit_url": self._absolute_url(ppt.get("edit_path")),
+        }
 
     def download(self, url, destination):
+        if not url:
+            raise RuntimeError("Presenton returned no download URL")
         Path(destination).parent.mkdir(parents=True, exist_ok=True)
-        with httpx.Client(timeout=self.s.PRESENTON_TIMEOUT_SECONDS, follow_redirects=True) as client:
+        with httpx.Client(
+            timeout=self.s.PRESENTON_TIMEOUT_SECONDS,
+            follow_redirects=True,
+        ) as client:
             response = client.get(url)
             response.raise_for_status()
             with open(destination, "wb") as handle:
