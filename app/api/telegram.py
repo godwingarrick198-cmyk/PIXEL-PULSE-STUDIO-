@@ -32,7 +32,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     update = await request.json(); message = update.get('message') or {}; chat = message.get('chat') or {}; chat_id = chat.get('id'); text = (message.get('text') or '').strip()
     if not chat_id or not text: return {'ok': True}
     if text.startswith('/start'):
-        await send_message(chat_id, f'Pixel Pulse Studio is online. Your Telegram chat ID is {chat_id}.\n\nCommands:\n/status\n/campaigns\n/newcampaign NAME|TARGET|DAYS|INDUSTRY|COUNTRY|SERVICE\n/hunt CAMPAIGN_ID\n/outreach CAMPAIGN_ID [PROSPECT_ID]\n/prospects\n/orders\n/neworder PACKAGE|NAME|COMPANY|EMAIL|PROSPECT_ID\n/order ORDER_ID\n/pause CAMPAIGN_ID\n/resume CAMPAIGN_ID\n/stop CAMPAIGN_ID\n/generate ORDER_ID')
+        await send_message(chat_id, f'Pixel Pulse Studio is online. Your Telegram chat ID is {chat_id}.\n\nCommands:\n/status\n/campaigns\n/newcampaign NAME|TARGET|DAYS|INDUSTRY|COUNTRY|SERVICE\n/hunt CAMPAIGN_ID\n/outreach CAMPAIGN_ID [PROSPECT_ID]\n/prospects\n/orders\n/findclients INDUSTRY|COUNTRY|COUNT\n/neworder PACKAGE|NAME|COMPANY|EMAIL|PROSPECT_ID\n/order ORDER_ID\n/pause CAMPAIGN_ID\n/resume CAMPAIGN_ID\n/stop CAMPAIGN_ID\n/generate ORDER_ID')
         return {'ok': True}
     if not authorized(chat_id):
         await send_message(chat_id, 'This bot is online, but this chat is not authorized for controls. Add your Telegram chat ID to TELEGRAM_ADMIN_CHAT_ID in Render.')
@@ -71,6 +71,77 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                         for p in found:
                             if not db.scalar(select(CampaignProspect.id).where(CampaignProspect.campaign_id==c.id,CampaignProspect.prospect_id==p.id)): db.add(CampaignProspect(campaign_id=c.id,prospect_id=p.id,status='QUEUED')); linked+=1
                         c.remaining_prospects=max(0,c.remaining_prospects-linked); c.completed_prospects+=linked; db.commit(); report=f'🎯 HUNT COMPLETE\nCampaign: {c.name}\nCampaign ID: {c.campaign_id}\nFound: {len(found)}\nQualified/added: {linked}\nRemaining capacity: {c.remaining_prospects}'; await send_message(chat_id,'✅ Hunt complete.\nQualified prospects found: '+str(len(found))+'\nAdded to campaign: '+str(linked)+'\nRemaining campaign capacity: '+str(c.remaining_prospects)); await notify_channel(report)
+        elif command == '/findclients':
+            if len(parts) != 2:
+                await send_message(chat_id, 'Usage: /findclients INDUSTRY|COUNTRY|COUNT\\nExample: /findclients dental|USA|5')
+            elif HUNT_LOCK.locked():
+                await send_message(chat_id, '⏳ A client search is already running. Please wait for it to finish.')
+            else:
+                fields=[x.strip() for x in arg.split('|')]
+                if len(fields) != 3:
+                    await send_message(chat_id, 'Usage: /findclients INDUSTRY|COUNTRY|COUNT')
+                else:
+                    industry,country,count_text=fields
+                    try:
+                        count=max(1,min(10,int(count_text)))
+                    except ValueError:
+                        count=0
+                    if not industry or not country or not count:
+                        await send_message(chat_id, 'Use a valid industry, country, and count from 1-10.')
+                    else:
+                        async with HUNT_LOCK:
+                            campaign=campaigns.create(
+                                db,
+                                f'Auto Outreach — {industry} — {country}',
+                                count,
+                                1,
+                                [industry],
+                                [country],
+                                ['presentation design'],
+                                'NORMAL'
+                            )
+                            query={'industry':industry,'country':country,'service':'presentation design','limit':count}
+                            await send_message(chat_id, f'🔎 Finding up to {count} qualified {industry} prospects in {country} with public contact emails...')
+                            found=await prospecting.discover(db,query,count)
+                            linked=0
+                            for p in found:
+                                if p.contact_email and not db.scalar(select(CampaignProspect.id).where(
+                                    CampaignProspect.campaign_id==campaign.id,
+                                    CampaignProspect.prospect_id==p.id
+                                )):
+                                    db.add(CampaignProspect(campaign_id=campaign.id,prospect_id=p.id,status='QUEUED'))
+                                    linked+=1
+                            campaign.remaining_prospects=max(0,campaign.remaining_prospects-linked)
+                            campaign.completed_prospects+=linked
+                            campaign.status='RUNNING'
+                            db.commit()
+
+                            sent=0
+                            failed=0
+                            queued=db.scalars(
+                                select(CampaignProspect).where(
+                                    CampaignProspect.campaign_id==campaign.id,
+                                    CampaignProspect.status=='QUEUED'
+                                ).order_by(CampaignProspect.id.asc()).limit(count)
+                            ).all()
+                            for cp in queued:
+                                result=await outreach.send_one(db,campaign.campaign_id,cp.prospect_id)
+                                if result.get('status')=='SENT':
+                                    sent+=1
+                                elif result.get('status')=='FAILED':
+                                    failed+=1
+
+                            campaign.status='STOPPED'
+                            db.commit()
+                            await send_message(
+                                chat_id,
+                                f'📧 AUTO OUTREACH COMPLETE\\n'
+                                f'Industry: {industry}\\nCountry: {country}\\n'
+                                f'Qualified prospects: {len(found)}\\n'
+                                f'Emails sent: {sent}\\n'
+                                f'Failed/skipped: {max(0,linked-sent)}\\n'
+                                f'Campaign: {campaign.campaign_id}'
+                            )
         elif command == '/outreach':
             if len(parts) not in (2,3): await send_message(chat_id,'Usage: /outreach CAMPAIGN_ID [PROSPECT_ID]\nFirst test sends only one email.')
             else:
