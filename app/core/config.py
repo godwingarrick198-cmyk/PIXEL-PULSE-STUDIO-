@@ -51,7 +51,7 @@ class Settings:
     GMAIL_CLIENT_ID: str = os.getenv("GMAIL_CLIENT_ID", "")
     GMAIL_CLIENT_SECRET: str = os.getenv("GMAIL_CLIENT_SECRET", "")
     GMAIL_REFRESH_TOKEN: str = os.getenv("GMAIL_REFRESH_TOKEN", "")
-    GMAIL_FROM_EMAIL: str = os.getenv("GMAIL_FROM_EMAIL", "")
+    GMAIL_FROM_EMAIL: str = os.getenv("GMAIL_FROM_EMAIL", "pixelpulsestudio777@gmail.com")
 
     PRESENTON_ENABLED: bool = _bool("PRESENTON_ENABLED", False)
     PRESENTON_URL: str = os.getenv("PRESENTON_URL", "")
