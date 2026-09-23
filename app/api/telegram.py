@@ -7,12 +7,13 @@ from app.services.campaigns import CampaignService
 from app.services.presentation import PresentationService
 from app.services.prospecting import ProspectingService
 from app.services.outreach import OutreachService
+from app.services.gmail import GmailReplyService
 from app.services.flutterwave import FlutterwaveService
 from app.core.config import get_settings
 from app.bot import send_message, webhook_secret
 
 router = APIRouter(prefix='/api/telegram')
-settings = get_settings(); campaigns = CampaignService(); presentations = PresentationService(); prospecting = ProspectingService(); outreach = OutreachService(); flw = FlutterwaveService()
+settings = get_settings(); campaigns = CampaignService(); presentations = PresentationService(); prospecting = ProspectingService(); outreach = OutreachService(); gmail = GmailReplyService(); flw = FlutterwaveService()
 HUNT_LOCK = asyncio.Lock()
 
 def authorized(chat_id):
@@ -40,7 +41,16 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     db = SessionLocal()
     try:
         parts=text.split(); command=parts[0].split('@')[0].lower(); arg=text[len(parts[0]):].strip()
-        if command == '/status':
+        if command == '/checkreplies':
+            if not gmail.configured():
+                await send_message(chat_id, 'Gmail reply checking is not configured yet. Add GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN and GMAIL_FROM_EMAIL in Render.')
+            else:
+                try:
+                    result=await gmail.check_replies()
+                    await send_message(chat_id, f"📬 GMAIL REPLIES CHECKED\nProcessed: {result.get('processed',0)}\nInterested: {result.get('interested',0)}\nSkipped: {result.get('skipped',0)}")
+                except Exception as e:
+                    await send_message(chat_id, f'Gmail reply check failed: {e}')
+        elif command == '/status':
             running=db.scalar(select(Campaign).where(Campaign.status=='RUNNING').order_by(Campaign.created_at.desc())); prospects=db.scalar(select(func.count(Prospect.id))) or 0; outreach_count=db.scalar(select(func.count(OutreachMessage.id)).where(OutreachMessage.status=='SENT')) or 0; orders=db.scalar(select(func.count(Order.id)).where(Order.status.in_(['PAID','IN_PRODUCTION','QC','READY']))) or 0
             msg=f'Agent: {"RUNNING" if running else "IDLE"}\nProspects: {prospects}\nOutreach sent: {outreach_count}\nActive orders: {orders}'
             if running: msg+=f'\nCampaign: {running.campaign_id} — {running.name}'
