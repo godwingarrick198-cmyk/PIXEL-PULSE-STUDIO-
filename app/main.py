@@ -9,6 +9,7 @@ from app.db.session import SessionLocal
 from app.models.entities import Order
 from app.api.routes import router
 from app.api.telegram import router as telegram_router
+from app.api.brevo import router as brevo_router
 from app.api.test_payment import router as test_payment_router
 from app.services.presentation import PresentationService
 from app.workers.scheduler import scheduler
@@ -92,6 +93,7 @@ async def generate_order_id_fix(request: Request, call_next):
 
 app.include_router(router)
 app.include_router(telegram_router)
+app.include_router(brevo_router)
 app.include_router(test_payment_router)
 
 @app.get("/")
