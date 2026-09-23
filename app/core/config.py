@@ -39,6 +39,7 @@ class Settings:
     BREVO_API_KEY: str = os.getenv("BREVO_API_KEY", "")
     BREVO_FROM_EMAIL: str = os.getenv("BREVO_FROM_EMAIL", "")
     BREVO_FROM_NAME: str = os.getenv("BREVO_FROM_NAME", "Pixel Pulse Studio")
+    BREVO_REPLY_DOMAIN: str = os.getenv("BREVO_REPLY_DOMAIN", "")
 
     SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
