@@ -18,6 +18,13 @@ class Qualification(BaseModel):
     personalization_points: list[str] = []
     recommended_channel: str = 'email'
 
+class ReplyAnalysis(BaseModel):
+    interested: bool
+    urgency: str = 'normal'
+    summary: str
+    recommended_action: str
+    reply: str
+
 class AIService:
     def __init__(self):
         self.settings=get_settings(); self.client=None
@@ -43,6 +50,20 @@ class AIService:
 
     def generate_outreach(self,prospect,service):
         name=prospect.get('contact_name') or prospect.get('founder_name') or 'there'; company=prospect.get('company_name') or 'your company'; return f'{service} for {company}',f'Hi {name},\n\nPixel Pulse Studio creates professional {service.lower()}s for businesses that need clear, polished presentations. Based on public information about {company}, I thought this service could be relevant to your team.\n\nWe handle the strategy, editable PowerPoint design, and final PDF delivery. If presentation support is useful, I can share the package options and turnaround.\n\nBest,\nPixel Pulse Studio'
+
+    def analyze_reply(self, prospect, conversation):
+        if not self.client:
+            text=conversation.lower()
+            interested=any(x in text for x in ('interested','yes','tell me more','pricing','price','cost','package','quote',"let's talk",'lets talk','available','how much'))
+            return ReplyAnalysis(interested=interested,urgency='high' if interested else 'normal',summary='Potentially interested reply.' if interested else 'General reply.',recommended_action='Notify owner and stop automated sales replies.' if interested else 'Continue conversation with a short helpful reply.',reply='Thanks for getting back to us. Garrick from Pixel Pulse Studio will follow up with you directly on the details and next steps.' if interested else 'Thanks for getting back to us. I can share the relevant details and next steps.')
+
+        prompt=f'''You are the sales qualification agent for Pixel Pulse Studio. Analyze the latest prospect email in context. Never invent facts. If the prospect shows buying interest, asks for pricing, a quote, availability, a call, package details, or clearly wants to proceed, set interested=true. When interested=true, recommend notifying the owner and stopping automated sales replies. Otherwise provide a short professional reply that answers only what is known and does not invent pricing or capabilities. Prospect: {json.dumps(prospect,default=str)} Conversation: {conversation} Return JSON with interested, urgency, summary, recommended_action, reply.'''
+        try:
+            resp=self.client.models.generate_content(model=GEMINI_MODEL,contents=prompt,config={'response_mime_type':'application/json','response_schema':ReplyAnalysis.model_json_schema()})
+            return ReplyAnalysis.model_validate(json.loads(resp.text))
+        except Exception as e:
+            events.event('ERROR',component='gemini_reply_analysis',error=str(e))
+            return ReplyAnalysis(interested=False,urgency='normal',summary='Gemini analysis failed.',recommended_action='Owner review required.',reply='Thanks for getting back to us. I will review your message and follow up shortly.')
 
     def sales_reply(self,conversation,customer_question):
         if not self.client: return 'I can help with package options, deliverables, turnaround, and onboarding steps.'
