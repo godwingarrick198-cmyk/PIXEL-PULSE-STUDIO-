@@ -31,6 +31,7 @@ class OutreachService:
             "to": [{"email": to_email}],
             "subject": subject,
             "textContent": body,
+            "replyTo": {"email": self._reply_address()},
         }
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.post(
@@ -39,6 +40,13 @@ class OutreachService:
                 json=payload,
             )
             response.raise_for_status()
+
+    def _reply_address(self):
+        domain = self.s.BREVO_REPLY_DOMAIN.strip().lower().strip(".")
+        if not domain:
+            return self.s.BREVO_FROM_EMAIL
+        local = self.s.BREVO_FROM_EMAIL.split("@", 1)[0] or "reply"
+        return f"{local}@{domain}"
 
     async def send_email(self, to_email, subject, body):
         if not to_email:
