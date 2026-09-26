@@ -92,7 +92,7 @@ class OSMProvider(ProspectProvider):
             + "("
             + "".join(parts)
             + ");"
-            + "out center tags 80;"
+            + "out center;"
         )
 
         for endpoint in self.endpoints:
