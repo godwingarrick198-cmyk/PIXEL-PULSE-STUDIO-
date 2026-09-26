@@ -177,7 +177,7 @@ class ProspectingService:
                             ):
                                 raw["contact_email"] = candidate
                                 raw["public_contact_url"] = url
-                                return raw
+                                return await self._research_website(raw)
 
                     except Exception:
                         continue
