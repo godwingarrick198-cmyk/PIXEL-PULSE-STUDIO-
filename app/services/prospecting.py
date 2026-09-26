@@ -73,9 +73,6 @@ class ProspectingService:
         website = raw.get("website")
         email = (raw.get("contact_email") or "").strip().lower()
 
-        if email and website:
-            return raw
-
         settings = self.s
         name = (raw.get("company_name") or "").strip()
         country = (raw.get("country") or "").strip()
@@ -192,6 +189,42 @@ class ProspectingService:
                 error=repr(exc),
             )
 
+        if website:
+            raw["website"] = website
+            raw["domain"] = self.normalize_domain(website)
+            return await self._research_website(raw)
+
+        return raw
+
+    async def _research_website(self, raw):
+        website = raw.get("website")
+        if not website:
+            return raw
+        headers = {"User-Agent": self.s.PUBLIC_WEB_USER_AGENT or "PixelPulseStudio/1.0"}
+        base = website.rstrip("/")
+        paths = ["/", "/about", "/about-us", "/services", "/products", "/solutions", "/news", "/blog", "/events"]
+        chunks = []
+        try:
+            async with httpx.AsyncClient(timeout=10, headers=headers, follow_redirects=True) as client:
+                for path in paths:
+                    try:
+                        response = await client.get(base + path)
+                        if not response.is_success:
+                            continue
+                        soup = BeautifulSoup(response.text[:500000], "html.parser")
+                        for tag in soup(["script", "style", "noscript"]):
+                            tag.decompose()
+                        text = soup.get_text(" ", strip=True)
+                        if text:
+                            chunks.append(text[:3500])
+                        if len(" ".join(chunks)) >= 14000:
+                            break
+                    except Exception:
+                        continue
+        except Exception as exc:
+            events.event("ERROR", component="website_research", error=repr(exc))
+        if chunks:
+            raw["research_text"] = " ".join(chunks)[:14000]
         return raw
 
     async def discover(self, db, query, limit):
@@ -238,15 +271,7 @@ class ProspectingService:
 
         saved = []
         seen = set()
-        stats = {
-            "raw": len(all_items),
-            "no_name": 0,
-            "no_email": 0,
-            "duplicate": 0,
-            "suppressed": 0,
-            "not_qualified": 0,
-            "saved": 0,
-        }
+        stats = {"raw": len(all_items), "no_name": 0, "no_email": 0, "duplicate": 0, "suppressed": 0, "not_qualified": 0, "no_opportunity": 0, "saved": 0}
 
         for raw in all_items:
             raw = await self._enrich_public_contact(dict(raw))
@@ -295,12 +320,12 @@ class ProspectingService:
                 }
             )
 
-            if (
-                not qualification.qualified
-                or qualification.score < self.s.MIN_QUALIFICATION_SCORE
-                or qualification.recommended_service == "SKIP"
-            ):
+            if (not qualification.qualified or qualification.score < self.s.MIN_QUALIFICATION_SCORE or qualification.recommended_service == "SKIP"):
                 stats["not_qualified"] += 1
+                continue
+
+            if qualification.presentation_opportunity_score < 60:
+                stats["no_opportunity"] += 1
                 continue
 
             prospect = Prospect(
