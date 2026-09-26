@@ -136,6 +136,8 @@ class GmailReplyService:
                         "interested": analysis.interested,
                         "summary": analysis.summary,
                         "recommended_action": analysis.recommended_action,
+                        "requested_slide_count": analysis.requested_slide_count,
+                        "presentation_idea": analysis.presentation_idea,
                         "at": datetime.now(timezone.utc).isoformat(),
                     })
                     conversation.messages_json = history
@@ -147,7 +149,7 @@ class GmailReplyService:
                         if self.s.TELEGRAM_ADMIN_CHAT_ID:
                             await send_message(
                                 self.s.TELEGRAM_ADMIN_CHAT_ID,
-                                f"🔥 INTERESTED CLIENT\\n\\nCompany: {prospect.company_name}\\nContact: {prospect.contact_name or prospect.founder_name or 'Unknown'}\\nEmail: {prospect.contact_email}\\nService: {prospect.service_match or 'Presentation design'}\\n\\nReply:\\n{body[:2500]}\\n\\nGemini: {analysis.summary}\\n\\n👉 Take over and close the deal."
+                                f"🔥 INTERESTED CLIENT\\n\\nCompany: {prospect.company_name}\\nContact: {prospect.contact_name or prospect.founder_name or 'Unknown'}\\nEmail: {prospect.contact_email}\\nService: {prospect.service_match or 'Presentation design'}\\nSlides requested: {analysis.requested_slide_count or 'Not provided'}\\nPresentation idea: {analysis.presentation_idea or 'Not provided'}\\n\\nReply:\\n{body[:2500]}\\n\\nGemini: {analysis.summary}\\n\\n👉 Take over and close the deal."
                             )
                     else:
                         reply_subject = subject if subject.lower().startswith("re:") else (f"Re: {subject}" if subject else "Re: Presentation support")
