@@ -33,7 +33,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     update = await request.json(); message = update.get('message') or {}; chat = message.get('chat') or {}; chat_id = chat.get('id'); text = (message.get('text') or '').strip()
     if not chat_id or not text: return {'ok': True}
     if text.startswith('/start'):
-        await send_message(chat_id, f'Pixel Pulse Studio is online. Your Telegram chat ID is {chat_id}.\n\nCommands:\n/status\n/campaigns\n/newcampaign NAME|TARGET|DAYS|INDUSTRY|COUNTRY|SERVICE\n/hunt CAMPAIGN_ID\n/outreach CAMPAIGN_ID [PROSPECT_ID]\n/prospects\n/orders\n/findclients INDUSTRY|COUNTRY|COUNT\n/neworder PACKAGE|NAME|COMPANY|EMAIL|PROSPECT_ID\n/order ORDER_ID\n/pause CAMPAIGN_ID\n/resume CAMPAIGN_ID\n/stop CAMPAIGN_ID\n/generate ORDER_ID')
+        await send_message(chat_id, f'Pixel Pulse Studio is online. Your Telegram chat ID is {chat_id}.\n\nCommands:\n/status\n/campaigns\n/newcampaign NAME|TARGET|DAYS|INDUSTRY|COUNTRY|SERVICE\n/hunt CAMPAIGN_ID\n/outreach CAMPAIGN_ID [PROSPECT_ID]\n/prospects\n/orders\n/findclients INDUSTRY|COUNTRY|COUNT\n/neworder PACKAGE|NAME|COMPANY|EMAIL|PROSPECT_ID\n/order ORDER_ID\n/pause CAMPAIGN_ID\n/resume CAMPAIGN_ID\n/stop CAMPAIGN_ID\n/generate ORDER_ID\n/checkreplies')
         return {'ok': True}
     if not authorized(chat_id):
         await send_message(chat_id, 'This bot is online, but this chat is not authorized for controls. Add your Telegram chat ID to TELEGRAM_ADMIN_CHAT_ID in Render.')
