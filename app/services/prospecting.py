@@ -84,9 +84,18 @@ class ProspectingService:
 
         try:
             async with httpx.AsyncClient(
-                timeout=httpx.Timeout(12.0),
+                timeout=httpx.Timeout(
+                    connect=5.0,
+                    read=8.0,
+                    write=8.0,
+                    pool=5.0,
+                ),
                 headers=headers,
                 follow_redirects=True,
+                limits=httpx.Limits(
+                    max_connections=10,
+                    max_keepalive_connections=5,
+                ),
             ) as client:
                 # If OSM gives a business name but no website, use public web
                 # search to locate the business's official site.
@@ -94,6 +103,7 @@ class ProspectingService:
                     search = await client.get(
                         "https://html.duckduckgo.com/html/",
                         params={"q": f'"{name}" {country} official website'},
+                        timeout=httpx.Timeout(connect=4.0, read=6.0, write=6.0, pool=4.0),
                     )
 
                     if search.is_success:
@@ -142,7 +152,15 @@ class ProspectingService:
 
                 for url in candidates:
                     try:
-                        response = await client.get(url)
+                        response = await client.get(
+                            url,
+                            timeout=httpx.Timeout(
+                                connect=4.0,
+                                read=7.0,
+                                write=7.0,
+                                pool=4.0,
+                            ),
+                        )
                         if not response.is_success:
                             continue
 
@@ -179,7 +197,15 @@ class ProspectingService:
                                 raw["public_contact_url"] = url
                                 return await self._research_website(raw)
 
-                    except Exception:
+                    except (httpx.TimeoutException, httpx.ConnectError):
+                        continue
+                    except Exception as exc:
+                        events.event(
+                            "WARNING",
+                            component="public_contact_page",
+                            url=url,
+                            error=repr(exc),
+                        )
                         continue
 
         except Exception as exc:
