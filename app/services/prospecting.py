@@ -150,6 +150,43 @@ class ProspectingService:
                     ],
                 ]
 
+                # Also discover the site's real contact/about/team URLs from
+                # the homepage. Many sites use custom paths instead of the
+                # conventional /contact and /about URLs.
+                try:
+                    homepage = await client.get(
+                        website,
+                        timeout=httpx.Timeout(
+                            connect=4.0, read=7.0, write=7.0, pool=4.0
+                        ),
+                    )
+                    if homepage.is_success:
+                        page_soup = BeautifulSoup(
+                            homepage.text[:700000], "html.parser"
+                        )
+                        for link in page_soup.select("a[href]"):
+                            href = link.get("href", "").strip()
+                            text = link.get_text(" ", strip=True).lower()
+                            if not href:
+                                continue
+                            absolute = urljoin(str(homepage.url), href)
+                            parsed = urlparse(absolute)
+                            if parsed.scheme not in ("http", "https"):
+                                continue
+                            if parsed.netloc.lower().removeprefix("www.") != self.normalize_domain(website):
+                                continue
+                            marker = f"{text} {parsed.path}".lower()
+                            if any(word in marker for word in (
+                                "contact", "email", "about", "team", "company",
+                                "reach", "connect", "get-in-touch",
+                            )):
+                                candidates.append(absolute)
+                except (httpx.TimeoutException, httpx.ConnectError):
+                    pass
+
+                # Keep order while removing duplicate URLs.
+                candidates = list(dict.fromkeys(candidates))[:12]
+
                 for url in candidates:
                     try:
                         response = await client.get(
@@ -173,6 +210,9 @@ class ProspectingService:
                             link.get("href", "")[7:].split("?")[0]
                             for link in soup.select('a[href^="mailto:"]')
                         ]
+                        # Some sites expose email addresses in HTML attributes,
+                        # JSON-LD, scripts, or hidden elements rather than text.
+                        found += EMAIL_RE.findall(response.text[:700000])
                         found += EMAIL_RE.findall(
                             soup.get_text(" ", strip=True)
                         )
