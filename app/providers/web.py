@@ -4,8 +4,8 @@ from app.core.config import get_settings
 from app.providers.base import ProspectProvider
 from app.core.logging import events
 
-EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
-PHONE_RE = re.compile(r"(?:\+?\d[\d\s().-]{7,}\d)")
+EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", re.I)
+PHONE_RE = re.compile(r"(?:\\+?\\d[\\d\\s().-]{7,}\\d)")
 CONTACT_PATHS = ('/contact', '/contact-us', '/about', '/about-us', '/team', '/company')
 BLOCKED_EMAIL_DOMAINS = {'example.com', 'example.org', 'example.net', 'sentry.io'}
 SEARCH_ENGINES = (
@@ -27,7 +27,7 @@ class WebDiscoveryProvider(ProspectProvider):
 
     @staticmethod
     def _clean_phone(value):
-        value=re.sub(r'\s+',' ',(value or '').strip())
+        value=re.sub(r'\\s+',' ',(value or '').strip())
         return value if PHONE_RE.fullmatch(value) else None
 
     @staticmethod
@@ -91,7 +91,6 @@ class WebDiscoveryProvider(ProspectProvider):
             title=a.get_text(' ',strip=True)
             if not href:
                 continue
-            # Google/Bing/DDG sometimes wrap the real destination in a redirect URL.
             if href.startswith('/url?'):
                 parsed=urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
                 href=(parsed.get('q') or parsed.get('url') or [''])[0]
@@ -104,7 +103,6 @@ class WebDiscoveryProvider(ProspectProvider):
             if self._is_search_domain(domain):
                 continue
             links.append((href, title or domain))
-        # preserve order while removing duplicates
         seen=set(); result=[]
         for href,title in links:
             domain=urllib.parse.urlparse(href).netloc.lower().removeprefix('www.')
@@ -152,12 +150,14 @@ class WebDiscoveryProvider(ProspectProvider):
                                     continue
                                 seen.add(domain)
                                 website=f'{p.scheme}://{p.netloc}'
+                                # Search discovery must return real websites even when the first
+                                # page has no public email. ProspectingService performs the deeper
+                                # contact enrichment and decides whether the prospect can be saved.
                                 contacts=await self._public_contacts(c,website)
-                                item={'company_name':re.sub(r'\s+',' ',title)[:255],'website':website,'domain':domain,'contact_email':contacts.get('contact_email'),'contact_phone':contacts.get('contact_phone'),'public_contact_url':contacts.get('public_contact_url'),'country':country,'industry':industry,'description':title,'source':'web','source_id':domain,'source_url':href}
-                                # Keep a result when a real website/phone exists; email is enriched later too.
-                                if item.get('website') and (item.get('contact_email') or item.get('contact_phone')):
+                                item={'company_name':re.sub(r'\\s+',' ',title)[:255],'website':website,'domain':domain,'contact_email':contacts.get('contact_email'),'contact_phone':contacts.get('contact_phone'),'public_contact_url':contacts.get('public_contact_url'),'country':country,'industry':industry,'description':title,'source':'web','source_id':domain,'source_url':href}
+                                if item.get('website'):
                                     out.append(item)
-                                if len(out)>=int(query.get('limit') or 10):
+                                if len(out)>=max(int(query.get('limit') or 10) * 3, 20):
                                     return out
                         except Exception as e:
                             errors.append(f'{template}: {repr(e)}')
